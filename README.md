@@ -1,133 +1,118 @@
-<h1 align="center"><img alt="niri" src="https://github.com/user-attachments/assets/07d05cd0-d5dc-4a28-9a35-51bae8f119a0"></h1>
-<p align="center">A scrollable-tiling Wayland compositor.</p>
+<h1 align="center">niri-better-action</h1>
+
+<p align="center">基于 niri 的滚动平铺 Wayland 合成器。左右移动列时，窗口会先一起缩小、错开，再缓回原尺寸；连按从当前画面继续，而不是跳回静止布局。</p>
+<p align="center">A scrollable-tiling Wayland compositor based on niri. Moving a column left or right shrinks the windows together, slides them apart, then eases them back to full size. Another press continues from the picture on screen.</p>
+
 <p align="center">
-    <a href="https://matrix.to/#/#niri:matrix.org"><img alt="Matrix" src="https://img.shields.io/badge/matrix-%23niri-blue?logo=matrix"></a>
-    <a href="https://github.com/niri-wm/niri/blob/main/LICENSE"><img alt="GitHub License" src="https://img.shields.io/github/license/niri-wm/niri"></a>
-    <a href="https://github.com/niri-wm/niri/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/niri-wm/niri?logo=github"></a>
+    <a href="https://github.com/niri-wm/niri"><img alt="Upstream" src="https://img.shields.io/badge/upstream-niri--wm%2Fniri-blue"></a>
+    <a href="https://github.com/niri-wm/niri/blob/v26.04/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
+    <a href="https://github.com/niri-wm/niri/releases/tag/v26.04"><img alt="Base" src="https://img.shields.io/badge/base-niri%20v26.04-green"></a>
 </p>
 
 <p align="center">
-    <a href="https://niri-wm.github.io/niri/Getting-Started.html">Getting Started</a> | <a href="https://niri-wm.github.io/niri/Configuration%3A-Introduction.html">Configuration</a> | <a href="https://github.com/niri-wm/niri/discussions/325">Setup&nbsp;Showcase</a>
+    <a href="#中文">中文</a> · <a href="#english">English</a> · <a href="https://niri-wm.github.io/niri/Getting-Started.html">上游入门 / Upstream getting started</a>
 </p>
 
 <img width="1280" height="720" alt="niri with a few windows open" src="https://github.com/user-attachments/assets/dea5909e-1859-4aaa-9d88-d37f9663e00b" />
 
-## About
+这是上游 niri 的静态截图，用来说明布局。本仓库改的是移动过程中的动画。
 
-Windows are arranged in columns on an infinite strip going to the right.
-Opening a new window never causes existing windows to resize.
+---
 
-Every monitor has its own separate window strip.
-Windows can never "overflow" onto an adjacent monitor.
+## 中文
 
-Workspaces are dynamic and arranged vertically.
-Every monitor has an independent set of workspaces, and there's always one empty workspace present all the way down.
+### 这是什么
 
-The workspace arrangement is preserved across disconnecting and connecting monitors where it makes sense.
-When a monitor disconnects, its workspaces will move to another monitor, but upon reconnection they will move back to the original monitor.
+[niri](https://github.com/niri-wm/niri) 是一个滚动平铺的 Wayland 合成器：窗口排成向右延伸的列，新窗口不会把已有窗口挤变形；每个显示器有自己的列带和工作区。
 
-## Features
+**niri-better-action** 从 niri **v26.04**（`8ed0da4`）分出。配置、快捷键、IPC、多显示器、浮动窗口、标签、截图和门户投屏都与这一版上游相同。本仓库只改了移动列、以及在列内上下移动窗口时的过渡。
 
-- Built from the ground up for scrollable tiling
-- [Dynamic workspaces](https://niri-wm.github.io/niri/Workspaces.html) like in GNOME
-- An [Overview](https://github.com/user-attachments/assets/379a5d1f-acdb-4c11-b36c-e85fd91f0995) that zooms out workspaces and windows
-- Built-in screenshot UI
-- Monitor and window screencasting through xdg-desktop-portal-gnome
-    - You can [block out](https://niri-wm.github.io/niri/Configuration%3A-Window-Rules.html#block-out-from) sensitive windows from screencasts
-    - [Dynamic cast target](https://niri-wm.github.io/niri/Screencasting.html#dynamic-screencast-target) that can change what it shows on the go
-- [Touchpad](https://github.com/niri-wm/niri/assets/1794388/946a910e-9bec-4cd1-a923-4a9421707515) and [mouse](https://github.com/niri-wm/niri/assets/1794388/8464e65d-4bf2-44fa-8c8e-5883355bd000) gestures
-- Group windows into [tabs](https://niri-wm.github.io/niri/Tabs.html)
-- Configurable layout: gaps, borders, struts, window sizes
-- [Gradient borders](https://niri-wm.github.io/niri/Configuration%3A-Layout.html#gradients) with Oklab and Oklch support
-- [Background blur](https://niri-wm.github.io/niri/Window-Effects.html) for windows and layer-shell surfaces
-- [Animations](https://github.com/niri-wm/niri/assets/1794388/ce178da2-af9e-4c51-876f-8709c241d95e) with support for [custom shaders](https://github.com/niri-wm/niri/assets/1794388/27a238d6-0a22-4692-b794-30dc7a626fad)
-- Live-reloading config
-- Works with [screen readers](https://niri-wm.github.io/niri/Accessibility.html)
+### 和原项目的区别
 
-## Video Demo
+上游在 `move-column-left` / `move-column-right` 时，按新顺序重排列，再用配置项 `animations.window-movement`（默认是弹簧）把列滑到新位置。窗口在移动过程中保持原尺寸。动画尚未结束就再按一次时，偏移从静止布局重算，画面会先回到排好的位置，再开始下一次滑动。
 
-https://github.com/niri-wm/niri/assets/1794388/bce834b0-f205-434e-a027-b373495f9729
+这一支把左右移动列做成三段，并让连按沿着当前画面继续：
 
-Also check out this video from Brodie Robertson that showcases a lot of the niri functionality: [Niri Is My New Favorite Wayland Compositor](https://youtu.be/DeYx2exm04M)
+1. **缩小。** 被移动的列以 420ms 的 ease-out cubic 收到自身的 92%（`TRAVEL_SCALE_MIN`）。这一段里，该工作区上的每一列都按这个比例绘制，所以左右的列会一起变小。各列先停在按键之前的屏幕坐标上。
+2. **错开。** 缩放到约 94%（0.92 + 0.02），或缩小动画已经结束时，邻居列和视角用同一条 420ms ease-out cubic 滑向新的列顺序。被移动的列保持缩小。视角和列位移用同一条曲线，避免列先漂开再突然对齐。
+3. **恢复。** 列的位置和视角都停稳之后，被移动的列再以 480ms 的 ease-out cubic 回到 100%。恢复阶段没有弹簧过冲。
 
-## Status
+在缩小、错开或恢复的过程中再按一次左/右，或使用「移到第一列 / 最后一列 / 指定序号」，会先记下每一列当时的屏幕位置和当前缩放，再从那里进入下一次缩小。若已经足够小，则直接开始错开。画面保持在你看到的位置上，再走向新顺序。
 
-Niri is stable for day-to-day use and does most things expected of a Wayland compositor.
-Many people are daily-driving niri, and are happy to help in our [Matrix channel].
+列内上下交换窗口（`move-window-up` / `move-window-down`）时，被你移动的那个窗口会缩到 92% 再回到原尺寸；与它对调的窗口只做普通滑动。浮动窗口换位时，被移动的窗口同样先缩小再恢复。
 
-Give it a try!
-Follow the instructions on the [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html) page.
-Grab a desktop shell like [DankMaterialShell] or [Noctalia] (or build a more traditional setup): niri by itself is not a complete desktop environment.
-Also check out [awesome-niri], a list of niri-related links and projects.
+缩放只加在绘制上，绕每个窗口的中心。布局尺寸、焦点和点击区域仍按未缩放的窗口计算。
 
-Here are some points you may have questions about:
+默认快捷键没有改动：
 
-- **Multi-monitor**: yes, a core part of the design from the very start. Mixed DPI works.
-- **Fractional scaling**: yes, plus all niri UI stays pixel-perfect.
-- **NVIDIA**: seems to work fine.
-- **Floating windows**: yes, starting from niri 25.01.
-- **Input devices**: niri supports tablets, touchpads, and touchscreens.
-You can map the tablet to a specific monitor, or use [OpenTabletDriver].
-We have touchpad gestures, but no touchscreen gestures yet.
-- **Wlr protocols**: yes, we have most of the important ones like layer-shell, gamma-control, screencopy.
-You can check on [wayland.app](https://wayland.app) at the bottom of each protocol's page.
-- **Performance**: while I run niri on beefy machines, I try to stay conscious of performance.
-I've seen someone use it fine on an Eee PC 900 from 2008, of all things.
-- **Xwayland**: [integrated](https://niri-wm.github.io/niri/Xwayland.html#using-xwayland-satellite) via xwayland-satellite starting from niri 25.08.
+| 动作 | 默认快捷键 |
+| --- | --- |
+| `move-column-left` | `Mod+Ctrl+Left`、`Mod+Ctrl+H` |
+| `move-column-right` | `Mod+Ctrl+Right`、`Mod+Ctrl+L` |
+| `move-window-up` / `move-window-down` | `Mod+Ctrl+Up` / `Down`，以及 `K` / `J` |
+| `move-column-to-first` / `move-column-to-last` | `Mod+Ctrl+Home` / `End` |
 
-## Media
+实现位于 `src/layout/scrolling.rs`（列的缩小、错开、恢复，以及连按时冻结当前位置）、`src/layout/tile.rs`（单窗口的缩放）和 `src/layout/floating.rs`（浮动窗口绘制同样的缩放）。
 
-[niri: Making a Wayland compositor in Rust](https://youtu.be/Kmz8ODolnDg?list=PLRdS-n5seLRqrmWDQY4KDqtRMfIwU0U3T) · *December 2024*
+### 基线与构建
 
-My talk from the 2024 Moscow RustCon about niri, and how I do randomized property testing and profiling, and measure input latency.
-The talk is in Russian, but I prepared full English subtitles that you can find in YouTube's subtitle language selector.
+- 上游：<https://github.com/niri-wm/niri>
+- 基线标签：[v26.04](https://github.com/niri-wm/niri/releases/tag/v26.04)
+- 编译、运行和配置与这一版 niri 相同，见 [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html)
+- niri 本身不是完整桌面环境，还需要状态栏、启动器等组件
 
-[An interview with Ivan, the developer behind Niri](https://www.trommelspeicher.de/podcast/special_the_developer_behind_niri) · *June 2025*
+### 许可与反馈
 
-An interview by a German tech podcast Das Triumvirat (in English).
-We talk about niri development and history, and my experience building and maintaining niri.
+本仓库与上游一样使用 [GPL-3.0-or-later](LICENSE)。niri 由 Ivan Molodetskikh 编写。这里的移动动画由 zelin_cai 修改。
 
-[A tour of the niri scrolling-tiling Wayland compositor](https://lwn.net/Articles/1025866/) · *July 2025*
+本仓库的动画问题请提到这里。其余合成器行为的问题仍应报到 [niri-wm/niri](https://github.com/niri-wm/niri)。
 
-An LWN article with a nice overview and introduction to niri.
+---
 
-## Contributing
+## English
 
-If you'd like to help with niri, there are plenty of both coding- and non-coding-related ways to do so.
-See [CONTRIBUTING.md](https://github.com/niri-wm/niri/blob/main/CONTRIBUTING.md) for an overview.
+### What this is
 
-## Inspiration
+[niri](https://github.com/niri-wm/niri) is a scrollable-tiling Wayland compositor. Windows sit in columns on a strip that extends to the right, and opening a window does not resize the ones already there. Each monitor has its own strip and its own workspaces.
 
-Niri is heavily inspired by [PaperWM] which implements scrollable tiling on top of GNOME Shell.
+**niri-better-action** forks niri **v26.04** (`8ed0da4`). Configuration, key bindings, IPC, multi-monitor layout, floating windows, tabs, the screenshot UI, and portal screencasting match that upstream release. This tree changes the motion used when a column moves left or right, and when a window moves up or down inside a column.
 
-One of the reasons that prompted me to try writing my own compositor is being able to properly separate the monitors.
-Being a GNOME Shell extension, PaperWM has to work against Shell's global window coordinate space to prevent windows from overflowing.
+### Differences from upstream niri
 
-## Tile Scrollably Elsewhere
+Upstream `move-column-left` / `move-column-right` reorders the columns, then slides them into place with `animations.window-movement` (a spring by default). Windows keep their size for the whole move. Pressing again before that animation finishes recomputes the offset from the resting layout, so the picture returns to the settled arrangement and then starts the next slide.
 
-Here are some other projects which implement a similar workflow:
+This fork plays a left/right column move in three phases, and a repeated press continues from the current frame:
 
-- [PaperWM]: scrollable tiling on top of GNOME Shell.
-- [karousel]: scrollable tiling on top of KDE.
-- [scroll](https://github.com/dawsers/scroll) and [papersway]: scrollable tiling on top of sway/i3.
-- Hyprland has a built-in [scrolling layout](https://wiki.hypr.land/Configuring/Scrolling-Layout/).
-- [Paneru] and [PaperWM.spoon]: scrollable tiling on top of macOS.
+1. **Shrink.** The moved column eases to 92% of its size (`TRAVEL_SCALE_MIN`) with a 420ms ease-out cubic. During this phase every column on that workspace is drawn at the same scale, so the columns beside it shrink with it. Columns stay at the screen positions they had when the key was pressed.
+2. **Cross.** Once the scale is about 94% (0.92 + 0.02), or the shrink animation has finished, the neighboring columns and the view ease to the new column order with the same 420ms ease-out cubic. The moved column stays small. The view and the column offsets share that curve, so a column does not drift and then jump into alignment.
+3. **Grow.** After the column positions and the view have settled, the moved column eases back to 100% with a 480ms ease-out cubic. This return does not overshoot.
 
-## Contact
+A further left/right press during shrink, cross, or grow — including move-to-first, move-to-last, and move-to-index — records each column's on-screen position and the current scale, then starts the next shrink from there. If the column is already small enough, the cross starts immediately. The picture stays where you see it, then moves toward the new order.
 
-Our main communication channel is a Matrix chat, feel free to join and ask a question: https://matrix.to/#/#niri:matrix.org
+`move-window-up` / `move-window-down` inside a column scales the window you moved down to 92% and back to full size. The window it swaps with only slides. Repositioning a floating window uses the same shrink-and-return on the window that moved.
 
-We also have a community Discord server: https://discord.gg/vT8Sfjy7sx
+The scale is applied only while drawing, around each window's center. Layout size, focus, and hit testing still use the unscaled window.
 
-[PaperWM]: https://github.com/paperwm/PaperWM
-[waybar]: https://github.com/Alexays/Waybar
-[fuzzel]: https://codeberg.org/dnkl/fuzzel
-[awesome-niri]: https://github.com/niri-wm/awesome-niri
-[karousel]: https://github.com/peterfajdiga/karousel
-[papersway]: https://spwhitton.name/tech/code/papersway/
-[Paneru]: https://github.com/karinushka/paneru
-[PaperWM.spoon]: https://github.com/mogenson/PaperWM.spoon
-[Matrix channel]: https://matrix.to/#/#niri:matrix.org
-[OpenTabletDriver]: https://opentabletdriver.net/
-[DankMaterialShell]: https://danklinux.com/
-[Noctalia]: https://noctalia.dev/
+The default bindings are unchanged:
+
+| Action | Default binding |
+| --- | --- |
+| `move-column-left` | `Mod+Ctrl+Left`, `Mod+Ctrl+H` |
+| `move-column-right` | `Mod+Ctrl+Right`, `Mod+Ctrl+L` |
+| `move-window-up` / `move-window-down` | `Mod+Ctrl+Up` / `Down`, and `K` / `J` |
+| `move-column-to-first` / `move-column-to-last` | `Mod+Ctrl+Home` / `End` |
+
+The code lives in `src/layout/scrolling.rs` (column shrink, cross, grow, and holding the current position across repeated presses), `src/layout/tile.rs` (per-window scale), and `src/layout/floating.rs` (the same scale while drawing floating windows).
+
+### Base and build
+
+- Upstream: <https://github.com/niri-wm/niri>
+- Base tag: [v26.04](https://github.com/niri-wm/niri/releases/tag/v26.04)
+- Build, run, and configuration match that niri release. See [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html).
+- niri by itself is not a full desktop; it still needs a bar, a launcher, and the rest of a session.
+
+### License and feedback
+
+This repository is [GPL-3.0-or-later](LICENSE), the same as upstream. niri is written by Ivan Molodetskikh. The move animation here is by zelin_cai.
+
+Report animation issues in this repository. Report other compositor behavior to [niri-wm/niri](https://github.com/niri-wm/niri).
