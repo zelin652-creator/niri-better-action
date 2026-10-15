@@ -96,6 +96,9 @@ pub struct Tile<W: LayoutElement> {
     /// The animation of the tile's opacity.
     pub(super) alpha_animation: Option<AlphaAnimation>,
 
+    /// Shrink-then-bounce of a window the user moved. `None` when it is not traveling.
+    travel_scale_anim: Option<Animation>,
+
     /// Offset during the initial interactive move rubberband.
     pub(super) interactive_move_offset: Point<f64, Logical>,
 
@@ -162,6 +165,52 @@ struct MoveAnimation {
     from: f64,
 }
 
+/// Smallest scale a traveling window springs down to before bouncing back to full size.
+pub(super) const TRAVEL_SCALE_MIN: f64 = 0.92;
+
+/// Ease-out for the shrink and the cross. Slower than the stock window-movement spring.
+pub(super) fn travel_settle_spring() -> niri_config::Animation {
+    niri_config::Animation {
+        off: false,
+        kind: niri_config::animations::Kind::Easing(niri_config::animations::EasingParams {
+            duration_ms: 420,
+            curve: niri_config::animations::Curve::EaseOutCubic,
+        }),
+    }
+}
+
+/// Ease-out for the return to full size, with no overshoot back past the resting position.
+pub(super) fn travel_spring() -> niri_config::Animation {
+    niri_config::Animation {
+        off: false,
+        kind: niri_config::animations::Kind::Easing(niri_config::animations::EasingParams {
+            duration_ms: 480,
+            curve: niri_config::animations::Curve::EaseOutCubic,
+        }),
+    }
+}
+
+pub(super) fn new_travel_scale_anim(
+    clock: &Clock,
+    from: f64,
+    to: f64,
+    config: niri_config::Animation,
+) -> Animation {
+    Animation::new(clock.clone(), from, to, 0., config)
+}
+
+/// Shrink spring switches to the bounce back up once it first reaches [`TRAVEL_SCALE_MIN`].
+pub(super) fn advance_travel_scale(anim: Animation, clock: &Clock) -> Option<Animation> {
+    let shrinking = (anim.to() - TRAVEL_SCALE_MIN).abs() < 1e-9;
+    if shrinking && anim.is_clamped_done() {
+        Some(new_travel_scale_anim(clock, anim.value(), 1., travel_spring()))
+    } else if anim.is_done() {
+        None
+    } else {
+        Some(anim)
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct AlphaAnimation {
     pub(super) anim: Animation,
@@ -205,6 +254,7 @@ impl<W: LayoutElement> Tile<W> {
             move_x_animation: None,
             move_y_animation: None,
             alpha_animation: None,
+            travel_scale_anim: None,
             interactive_move_offset: Point::from((0., 0.)),
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
@@ -439,6 +489,10 @@ impl<W: LayoutElement> Tile<W> {
                 self.alpha_animation = None;
             }
         }
+
+        if let Some(anim) = self.travel_scale_anim.take() {
+            self.travel_scale_anim = advance_travel_scale(anim, &self.clock);
+        }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
@@ -450,6 +504,7 @@ impl<W: LayoutElement> Tile<W> {
             || self.resize_animation.is_some()
             || self.move_x_animation.is_some()
             || self.move_y_animation.is_some()
+            || self.travel_scale_anim.is_some()
             || self
                 .alpha_animation
                 .as_ref()
@@ -577,18 +632,39 @@ impl<W: LayoutElement> Tile<W> {
         self.animate_move_y_from(from.y);
     }
 
+    /// Same as [`Self::animate_move_from`], and also plays the travel shrink on this tile.
+    pub fn animate_move_from_travel(&mut self, from: Point<f64, Logical>) {
+        let config = travel_spring();
+        self.animate_move_x_inner(from.x, config, true);
+        self.animate_move_y_inner(from.y, config, true);
+    }
+
     pub fn animate_move_x_from(&mut self, from: f64) {
         self.animate_move_x_from_with_config(from, self.options.animations.window_movement.0);
     }
 
     pub fn animate_move_x_from_with_config(&mut self, from: f64, config: niri_config::Animation) {
+        self.animate_move_x_inner(from, config, false);
+    }
+
+    fn animate_move_x_inner(
+        &mut self,
+        from: f64,
+        config: niri_config::Animation,
+        travel_scale: bool,
+    ) {
         let current_offset = self.render_offset().x;
 
-        // Preserve the previous config if ongoing.
-        let anim = self.move_x_animation.take().map(|move_| move_.anim);
-        let anim = anim
-            .map(|anim| anim.restarted(1., 0., 0.))
-            .unwrap_or_else(|| Animation::new(self.clock.clone(), 1., 0., 0., config));
+        // A travel move always starts the travel spring. Restarting would keep whatever spring
+        // was already running on this axis.
+        let anim = if travel_scale {
+            self.begin_travel_scale();
+            Animation::new(self.clock.clone(), 1., 0., 0., config)
+        } else {
+            let anim = self.move_x_animation.take().map(|move_| move_.anim);
+            anim.map(|anim| anim.restarted(1., 0., 0.))
+                .unwrap_or_else(|| Animation::new(self.clock.clone(), 1., 0., 0., config))
+        };
 
         self.move_x_animation = Some(MoveAnimation {
             anim,
@@ -600,19 +676,58 @@ impl<W: LayoutElement> Tile<W> {
         self.animate_move_y_from_with_config(from, self.options.animations.window_movement.0);
     }
 
+    /// Vertical move of the window the user asked to move, with the travel shrink.
+    pub fn animate_move_y_from_travel(&mut self, from: f64) {
+        self.animate_move_y_inner(from, travel_spring(), true);
+    }
+
     pub fn animate_move_y_from_with_config(&mut self, from: f64, config: niri_config::Animation) {
+        self.animate_move_y_inner(from, config, false);
+    }
+
+    fn animate_move_y_inner(
+        &mut self,
+        from: f64,
+        config: niri_config::Animation,
+        travel_scale: bool,
+    ) {
         let current_offset = self.render_offset().y;
 
-        // Preserve the previous config if ongoing.
-        let anim = self.move_y_animation.take().map(|move_| move_.anim);
-        let anim = anim
-            .map(|anim| anim.restarted(1., 0., 0.))
-            .unwrap_or_else(|| Animation::new(self.clock.clone(), 1., 0., 0., config));
+        let anim = if travel_scale {
+            self.begin_travel_scale();
+            Animation::new(self.clock.clone(), 1., 0., 0., config)
+        } else {
+            let anim = self.move_y_animation.take().map(|move_| move_.anim);
+            anim.map(|anim| anim.restarted(1., 0., 0.))
+                .unwrap_or_else(|| Animation::new(self.clock.clone(), 1., 0., 0., config))
+        };
 
         self.move_y_animation = Some(MoveAnimation {
             anim,
             from: from + current_offset,
         });
+    }
+
+    fn begin_travel_scale(&mut self) {
+        let from = self
+            .travel_scale_anim
+            .as_ref()
+            .map(|anim| anim.value())
+            .unwrap_or(1.);
+        self.travel_scale_anim = Some(new_travel_scale_anim(
+            &self.clock,
+            from,
+            TRAVEL_SCALE_MIN,
+            travel_spring(),
+        ));
+    }
+
+    /// Visual scale while this tile is the subject of a directional move. `1.0` otherwise.
+    pub fn travel_scale(&self) -> f64 {
+        self.travel_scale_anim
+            .as_ref()
+            .map(|anim| anim.value())
+            .unwrap_or(1.)
     }
 
     pub fn offset_move_y_anim_current(&mut self, offset: f64) {

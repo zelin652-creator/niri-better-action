@@ -5,6 +5,7 @@ use std::rc::Rc;
 use niri_config::utils::MergeWith as _;
 use niri_config::{PresetSize, RelativeTo};
 use niri_ipc::{PositionChange, SizeChange, WindowLayout};
+use smithay::backend::renderer::element::utils::RescaleRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 
@@ -72,6 +73,7 @@ pub struct FloatingSpace<W: LayoutElement> {
 niri_render_elements! {
     FloatingSpaceRenderElement<R> => {
         Tile = TileRenderElement<R>,
+        TravelScale = RescaleRenderElement<TileRenderElement<R>>,
         ClosingWindow = ClosingWindowRenderElement,
     }
 }
@@ -1079,8 +1081,19 @@ impl<W: LayoutElement> FloatingSpace<W> {
             let focus_ring = focus_ring && Some(tile.window().id()) == active.as_ref();
 
             let xray_pos = xray_pos.offset(tile_pos);
+            let travel_scale = tile.travel_scale();
+            // Same lock as the scrolling layout: compute the pivot before tile.render().
+            let travel_origin = ((travel_scale - 1.).abs() > 0.001).then(|| {
+                let size = tile.animated_tile_size();
+                let center = tile_pos + Point::from((size.w / 2., size.h / 2.));
+                center.to_physical_precise_round(scale)
+            });
             tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
-                push(elem.into())
+                if let Some(origin) = travel_origin {
+                    push(RescaleRenderElement::from_element(elem, origin, travel_scale).into());
+                } else {
+                    push(elem.into());
+                }
             });
         }
     }
@@ -1236,7 +1249,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let diff = prev_pos - new_pos;
         if diff.x * diff.x + diff.y * diff.y > ANIMATION_THRESHOLD_SQ {
-            tile.animate_move_from(prev_pos - new_pos);
+            tile.animate_move_from_travel(prev_pos - new_pos);
         }
     }
 
