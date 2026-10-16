@@ -1,0 +1,12 @@
+// Nested preview. The host compositor owns Super, so this window uses Alt as Mod.
+// Column movement: Alt+Ctrl+Left / Right, or Alt+Ctrl+H / L.
+// The host already binds Alt+Tab, Alt+grave, and Alt+Space, so those do not reach this window.
+include "default-config.kdl"
+
+input {
+    mod-key-nested "Alt"
+}
+
+spawn-at-startup "alacritty"
+spawn-at-startup "alacritty"
+spawn-at-startup "alacritty"

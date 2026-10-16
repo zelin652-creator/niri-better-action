@@ -31,17 +31,16 @@
 
 上游在 `move-column-left` / `move-column-right` 时，按新顺序重排列，再用配置项 `animations.window-movement`（默认是弹簧）把列滑到新位置。窗口在移动过程中保持原尺寸。动画尚未结束就再按一次时，偏移从静止布局重算，画面会先回到排好的位置，再开始下一次滑动。
 
-这一支把左右移动列做成三段，并让连按沿着当前画面继续：
+这一支把左右移动列做成同时进行的缩小和错开，再恢复尺寸，并让连按沿着当前画面继续：
 
-1. **缩小。** 被移动的列以 420ms 的 ease-out cubic 收到自身的 92%（`TRAVEL_SCALE_MIN`）。这一段里，该工作区上的每一列都按这个比例绘制，所以左右的列会一起变小。各列先停在按键之前的屏幕坐标上。
-2. **错开。** 缩放到约 94%（0.92 + 0.02），或缩小动画已经结束时，邻居列和视角用同一条 420ms ease-out cubic 滑向新的列顺序。被移动的列保持缩小。视角和列位移用同一条曲线，避免列先漂开再突然对齐。
-3. **恢复。** 列的位置和视角都停稳之后，被移动的列再以 480ms 的 ease-out cubic 回到 100%。恢复阶段没有弹簧过冲。
+1. **缩小并错开。** 按下的同一帧里，被移动的列以 420ms 的 ease-out cubic 收到自身的 92%（`TRAVEL_SCALE_MIN`），该工作区上的每一列都按这个比例绘制，并朝正在移动的那个窗口的中心收拢，而不是各自绕自己的中心缩小。邻居列、被移动的列和视角也在这一帧用同一条 420ms ease-out cubic 滑向新的列顺序，不会等缩小结束。视角和列位移用同一条曲线，避免列先漂开再突然对齐。
+2. **恢复。** 列的位置和视角都停稳之后，被移动的列再以 480ms 的 ease-out cubic 回到 100%。恢复阶段没有弹簧过冲。
 
-在缩小、错开或恢复的过程中再按一次左/右，或使用「移到第一列 / 最后一列 / 指定序号」，会先记下每一列当时的屏幕位置和当前缩放，再从那里进入下一次缩小。若已经足够小，则直接开始错开。画面保持在你看到的位置上，再走向新顺序。
+在缩小、错开或恢复的过程中再按一次左/右，或使用「移到第一列 / 最后一列 / 指定序号」，会先记下每一列当时的屏幕位置和当前缩放，并立刻从那里继续滑动。画面保持在你看到的位置上，再走向新顺序，不会先停住等再缩小一轮。
 
 列内上下交换窗口（`move-window-up` / `move-window-down`）时，被你移动的那个窗口会缩到 92% 再回到原尺寸；与它对调的窗口只做普通滑动。浮动窗口换位时，被移动的窗口同样先缩小再恢复。
 
-缩放只加在绘制上，绕每个窗口的中心。布局尺寸、焦点和点击区域仍按未缩放的窗口计算。
+缩放只加在绘制上。左右移动列时，所有窗口绕正在移动的那个窗口的中心收拢。列内上下移动、以及浮动窗口换位时，只有被移动的窗口在缩小，中心就是它自己。布局尺寸、焦点和点击区域仍按未缩放的窗口计算。
 
 默认快捷键没有改动：
 
@@ -81,17 +80,16 @@
 
 Upstream `move-column-left` / `move-column-right` reorders the columns, then slides them into place with `animations.window-movement` (a spring by default). Windows keep their size for the whole move. Pressing again before that animation finishes recomputes the offset from the resting layout, so the picture returns to the settled arrangement and then starts the next slide.
 
-This fork plays a left/right column move in three phases, and a repeated press continues from the current frame:
+This fork plays a left/right column move as a shrink and a slide together, then a return to full size. A repeated press continues from the current frame:
 
-1. **Shrink.** The moved column eases to 92% of its size (`TRAVEL_SCALE_MIN`) with a 420ms ease-out cubic. During this phase every column on that workspace is drawn at the same scale, so the columns beside it shrink with it. Columns stay at the screen positions they had when the key was pressed.
-2. **Cross.** Once the scale is about 94% (0.92 + 0.02), or the shrink animation has finished, the neighboring columns and the view ease to the new column order with the same 420ms ease-out cubic. The moved column stays small. The view and the column offsets share that curve, so a column does not drift and then jump into alignment.
-3. **Grow.** After the column positions and the view have settled, the moved column eases back to 100% with a 480ms ease-out cubic. This return does not overshoot.
+1. **Shrink and cross.** On the frame the key is pressed, the moved column eases to 92% of its size (`TRAVEL_SCALE_MIN`) with a 420ms ease-out cubic, and every column on that workspace is drawn at the same scale. The scale is about the center of the window being moved, so the other windows draw in toward it instead of each shrinking around its own center. The neighboring columns, the moved column, and the view also start easing to the new column order on that frame with the same 420ms ease-out cubic. The slide does not wait for the shrink. The view and the column offsets share that curve, so a column does not drift and then jump into alignment.
+2. **Grow.** After the column positions and the view have settled, the moved column eases back to 100% with a 480ms ease-out cubic. This return does not overshoot.
 
-A further left/right press during shrink, cross, or grow — including move-to-first, move-to-last, and move-to-index — records each column's on-screen position and the current scale, then starts the next shrink from there. If the column is already small enough, the cross starts immediately. The picture stays where you see it, then moves toward the new order.
+A further left/right press during the move or the grow — including move-to-first, move-to-last, and move-to-index — records each column's on-screen position and the current scale, then continues the slide from there immediately. The picture stays where you see it, then moves toward the new order, without parking until the column shrinks again.
 
 `move-window-up` / `move-window-down` inside a column scales the window you moved down to 92% and back to full size. The window it swaps with only slides. Repositioning a floating window uses the same shrink-and-return on the window that moved.
 
-The scale is applied only while drawing, around each window's center. Layout size, focus, and hit testing still use the unscaled window.
+The scale is applied only while drawing. A left/right column move scales every window about the center of the window being moved. Moving a window up or down inside a column, or repositioning a floating window, scales only that window, about its own center. Layout size, focus, and hit testing still use the unscaled window.
 
 The default bindings are unchanged:
 

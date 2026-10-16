@@ -101,7 +101,10 @@ pub struct ScrollingSpace<W: LayoutElement> {
     column_travel: Option<ColumnTravel>,
 }
 
-/// Shrink in place, cross past the other columns, then bounce the moved column back to full size.
+/// Cross past the other columns while shrinking, then ease the moved column back to full size.
+///
+/// The slide starts in the same frame as the shrink. Waiting for the scale to settle first holds
+/// the active window in place for most of the shrink, which reads as a long delay before it moves.
 #[derive(Debug, Clone, Copy)]
 struct ColumnTravel {
     idx: usize,
@@ -110,13 +113,9 @@ struct ColumnTravel {
 
 #[derive(Debug, Clone, Copy)]
 enum ColumnTravelPhase {
-    Shrink,
     Cross,
     Grow,
 }
-
-/// How close to [`TRAVEL_SCALE_MIN`] counts as shrunk, so the cross does not wait out the ease tail.
-const TRAVEL_SHRINK_READY: f64 = TRAVEL_SCALE_MIN + 0.02;
 
 niri_render_elements! {
     ScrollingSpaceRenderElement<R> => {
@@ -124,6 +123,7 @@ niri_render_elements! {
         TravelScale = RescaleRenderElement<TileRenderElement<R>>,
         ClosingWindow = ClosingWindowRenderElement,
         TabIndicator = TabIndicatorRenderElement,
+        TravelTab = RescaleRenderElement<TabIndicatorRenderElement>,
     }
 }
 
@@ -1741,15 +1741,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
 
         match travel.phase {
-            ColumnTravelPhase::Shrink => {
-                if self.columns[travel.idx].travel_shrink_ready() {
-                    self.begin_cross(travel.idx);
-                    self.column_travel = Some(ColumnTravel {
-                        phase: ColumnTravelPhase::Cross,
-                        ..travel
-                    });
-                }
-            }
             ColumnTravelPhase::Cross => {
                 let subject_moving = self.columns[travel.idx].is_sliding();
                 let neighbors_moving = self
@@ -1823,13 +1814,14 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         self.view_offset_to_restore = None;
         self.interactive_resize = None;
 
-        let mut phase = ColumnTravelPhase::Shrink;
-        // Already small from the previous press: retarget the cross immediately.
-        if self.columns[new_idx].travel_shrink_ready() {
-            self.begin_cross(new_idx);
-            phase = ColumnTravelPhase::Cross;
-        }
-        self.column_travel = Some(ColumnTravel { idx: new_idx, phase });
+        // Slide on this same frame. The scale keeps easing toward the travel minimum in parallel;
+        // gating the slide on that scale leaves the active window parked until the shrink catches
+        // up, including when a second press interrupts a grow-back.
+        self.begin_cross(new_idx);
+        self.column_travel = Some(ColumnTravel {
+            idx: new_idx,
+            phase: ColumnTravelPhase::Cross,
+        });
     }
 
     pub fn move_left(&mut self) -> bool {
@@ -3037,13 +3029,32 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
 
         let mut first = true;
-        // Left and right columns share the moved column's scale, including the shrink to 0.85 and the grow back.
-        let shared_travel_scale = self.column_travel.and_then(|travel| {
-            self.columns.get(travel.idx).map(|col| col.travel_scale())
-        });
-
         // This matches self.tiles_in_render_order().
         let view_off = Point::from((-self.view_pos(), 0.));
+        // Every column uses the moved window's scale, and shrinks toward that window rather than
+        // toward its own center.
+        let shared_travel = self.column_travel.and_then(|travel| {
+            if travel.idx >= self.columns.len() {
+                return None;
+            }
+            let col_x = self.column_x(travel.idx);
+            let col = &self.columns[travel.idx];
+            let factor = col.travel_scale();
+            let tile_idx = col.active_tile_idx;
+            let tile_off = col.tile_offset(tile_idx);
+            let tile = &col.tiles[tile_idx];
+            let tile_pos = view_off
+                + Point::from((col_x, 0.))
+                + col.render_offset()
+                + tile_off
+                + tile.render_offset();
+            let tile_pos = tile_pos.to_physical_precise_round(scale).to_logical(scale);
+            let size = tile.animated_tile_size();
+            let center = tile_pos + Point::from((size.w / 2., size.h / 2.));
+            Some((factor, center.to_physical_precise_round(scale)))
+        });
+        let shared_rescale = shared_travel.filter(|(factor, _)| (factor - 1.).abs() > 0.001);
+
         for (col, col_x) in self.columns_in_render_order() {
             let col_off = Point::from((col_x, 0.));
             let col_render_off = col.render_offset();
@@ -3052,8 +3063,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             {
                 let pos = view_off + col_off + col_render_off;
                 let pos = pos.to_physical_precise_round(scale).to_logical(scale);
-                col.tab_indicator
-                    .render(ctx.renderer, pos, &mut |elem| push(elem.into()));
+                col.tab_indicator.render(ctx.renderer, pos, &mut |elem| {
+                    if let Some((factor, pivot)) = shared_rescale {
+                        push(RescaleRenderElement::from_element(elem, pivot, factor).into());
+                    } else {
+                        push(elem.into());
+                    }
+                });
             }
 
             for (tile, tile_off, visible) in col.tiles_in_render_order() {
@@ -3079,15 +3095,22 @@ impl<W: LayoutElement> ScrollingSpace<W> {
                 }
 
                 let xray_pos = xray_pos.offset(tile_pos);
-                let travel_scale = shared_travel_scale
+                let travel_scale = shared_travel
+                    .map(|(factor, _)| factor)
                     .unwrap_or_else(|| col.travel_scale())
                     .min(tile.travel_scale());
                 // Window::geometry locks surface user data. tile.render() already holds that
                 // lock while invoking this callback, so the pivot has to be computed here.
+                // A column move scales every window about the moved window. A window moving
+                // inside a column is the only one scaling, so its own center is that point.
                 let travel_origin = ((travel_scale - 1.).abs() > 0.001).then(|| {
-                    let size = tile.animated_tile_size();
-                    let center = tile_pos + Point::from((size.w / 2., size.h / 2.));
-                    center.to_physical_precise_round(scale)
+                    if let Some((_, pivot)) = shared_travel {
+                        pivot
+                    } else {
+                        let size = tile.animated_tile_size();
+                        let center = tile_pos + Point::from((size.w / 2., size.h / 2.));
+                        center.to_physical_precise_round(scale)
+                    }
                 });
                 tile.render(ctx.r(), tile_pos, xray_pos, focus_ring, &mut |elem| {
                     if let Some(origin) = travel_origin {
@@ -4387,13 +4410,6 @@ impl<W: LayoutElement> Column<W> {
             TRAVEL_SCALE_MIN,
             travel_settle_spring(),
         ));
-    }
-
-    fn travel_shrink_ready(&self) -> bool {
-        self.travel_scale_anim.as_ref().is_some_and(|anim| {
-            (anim.to() - TRAVEL_SCALE_MIN).abs() < 1e-9
-                && (anim.is_done() || anim.value() <= TRAVEL_SHRINK_READY)
-        })
     }
 
     fn start_travel_grow(&mut self, to: f64) {
