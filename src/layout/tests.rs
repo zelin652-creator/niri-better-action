@@ -2643,6 +2643,51 @@ fn interactive_move_onto_last_workspace() {
 }
 
 #[test]
+fn repeated_moves_to_workspace_settle() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::ConsumeWindowIntoColumn,
+        Op::MoveColumnToWorkspaceDown(true),
+    ];
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    let MonitorSet::Normal { monitors, .. } = &layout.monitor_set else {
+        unreachable!()
+    };
+    assert!(monitors[0].workspaces.iter().any(|ws| ws.has_lifted()));
+
+    let ops = [
+        Op::AdvanceAnimations { msec_delta: 150 },
+        Op::MoveColumnToWorkspaceDown(true),
+        Op::AdvanceAnimations { msec_delta: 150 },
+        Op::MoveColumnToWorkspaceUp(true),
+        Op::AdvanceAnimations { msec_delta: 100 },
+        Op::MoveWindowDownOrToWorkspaceDown,
+        Op::AdvanceAnimations { msec_delta: 100 },
+        Op::MoveWindowToWorkspaceDown(false),
+        Op::AdvanceAnimations { msec_delta: 100 },
+        Op::MoveColumnToWorkspace(0, true),
+    ];
+    check_ops_on_layout(&mut layout, ops);
+    assert!(layout.are_animations_ongoing(None));
+
+    // The grow back to full size only starts once the slide has finished.
+    for _ in 0..10 {
+        Op::AdvanceAnimations { msec_delta: 1000 }.apply(&mut layout);
+        layout.verify_invariants();
+    }
+    assert!(!layout.are_animations_ongoing(None));
+}
+
+#[test]
 fn interactive_move_onto_first_empty_workspace() {
     let ops = [
         Op::AddOutput(1),

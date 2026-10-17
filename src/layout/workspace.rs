@@ -600,12 +600,36 @@ impl<W: LayoutElement> Workspace<W> {
 
     pub fn add_tile(
         &mut self,
+        tile: Tile<W>,
+        target: WorkspaceAddWindowTarget<W>,
+        activate: ActivateWindow,
+        width: ColumnWidth,
+        is_full_width: bool,
+        is_floating: bool,
+    ) {
+        self.add_tile_with_anim_config(
+            tile,
+            target,
+            activate,
+            width,
+            is_full_width,
+            is_floating,
+            None,
+        );
+    }
+
+    /// `anim_config` drives the other columns making room and the view pan in the scrolling
+    /// layout.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_tile_with_anim_config(
+        &mut self,
         mut tile: Tile<W>,
         target: WorkspaceAddWindowTarget<W>,
         activate: ActivateWindow,
         width: ColumnWidth,
         is_full_width: bool,
         is_floating: bool,
+        anim_config: Option<niri_config::Animation>,
     ) {
         self.enter_output_for_window(tile.window());
         tile.restore_to_floating = is_floating;
@@ -624,8 +648,14 @@ impl<W: LayoutElement> Workspace<W> {
                         self.floating_is_active = FloatingActive::Yes;
                     }
                 } else {
-                    self.scrolling
-                        .add_tile(None, tile, activate, width, is_full_width, None);
+                    self.scrolling.add_tile(
+                        None,
+                        tile,
+                        activate,
+                        width,
+                        is_full_width,
+                        anim_config,
+                    );
 
                     if activate {
                         self.floating_is_active = FloatingActive::No;
@@ -634,8 +664,14 @@ impl<W: LayoutElement> Workspace<W> {
             }
             WorkspaceAddWindowTarget::NewColumnAt(col_idx) => {
                 let activate = activate.map_smart(|| false);
-                self.scrolling
-                    .add_tile(Some(col_idx), tile, activate, width, is_full_width, None);
+                self.scrolling.add_tile(
+                    Some(col_idx),
+                    tile,
+                    activate,
+                    width,
+                    is_full_width,
+                    anim_config,
+                );
 
                 if activate {
                     self.floating_is_active = FloatingActive::No;
@@ -674,8 +710,14 @@ impl<W: LayoutElement> Workspace<W> {
                         self.floating_is_active = FloatingActive::Yes;
                     }
                 } else if floating_has_window {
-                    self.scrolling
-                        .add_tile(None, tile, activate, width, is_full_width, None);
+                    self.scrolling.add_tile(
+                        None,
+                        tile,
+                        activate,
+                        width,
+                        is_full_width,
+                        anim_config,
+                    );
 
                     if activate {
                         self.floating_is_active = FloatingActive::No;
@@ -709,15 +751,43 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn add_column(&mut self, column: Column<W>, activate: bool) {
+        self.add_column_with_anim_config(column, activate, None);
+    }
+
+    pub fn add_column_with_anim_config(
+        &mut self,
+        column: Column<W>,
+        activate: bool,
+        anim_config: Option<niri_config::Animation>,
+    ) {
         for (tile, _) in column.tiles() {
             self.enter_output_for_window(tile.window());
         }
 
-        self.scrolling.add_column(None, column, activate, None);
+        self.scrolling
+            .add_column(None, column, activate, anim_config);
 
         if activate {
             self.floating_is_active = FloatingActive::No;
         }
+    }
+
+    /// Where a scrolling window is drawn right now, and the column-level travel scale it is drawn
+    /// with. `None` for floating windows, which do not take part in the cross-workspace travel.
+    pub fn scrolling_window_visual(&self, window: &W::Id) -> Option<(Point<f64, Logical>, f64)> {
+        let pos = self.scrolling.window_visual_pos(window)?;
+        let scale = self.scrolling.window_travel_scale(window)?;
+        Some((pos, scale))
+    }
+
+    pub fn has_lifted(&self) -> bool {
+        self.scrolling.has_lifted()
+    }
+
+    /// See [`ScrollingSpace::begin_lift`]. Does nothing if the window landed in the floating
+    /// layout.
+    pub fn begin_lift(&mut self, window: &W::Id, from: Point<f64, Logical>, from_scale: f64) {
+        self.scrolling.begin_lift(window, from, from_scale);
     }
 
     fn update_focus_floating_tiling_after_removing(&mut self, removed_from_floating: bool) {
@@ -734,12 +804,21 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn remove_tile(&mut self, id: &W::Id, transaction: Transaction) -> RemovedTile<W> {
+        self.remove_tile_with_anim_config(id, transaction, None)
+    }
+
+    pub fn remove_tile_with_anim_config(
+        &mut self,
+        id: &W::Id,
+        transaction: Transaction,
+        anim_config: Option<niri_config::Animation>,
+    ) -> RemovedTile<W> {
         let mut from_floating = false;
         let removed = if self.floating.has_window(id) {
             from_floating = true;
             self.floating.remove_tile(id)
         } else {
-            self.scrolling.remove_tile(id, transaction)
+            self.scrolling.remove_tile(id, transaction, anim_config)
         };
 
         if let Some(output) = &self.output {
@@ -752,11 +831,20 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn remove_active_tile(&mut self, transaction: Transaction) -> Option<RemovedTile<W>> {
+        self.remove_active_tile_with_anim_config(transaction, None)
+    }
+
+    pub fn remove_active_tile_with_anim_config(
+        &mut self,
+        transaction: Transaction,
+        anim_config: Option<niri_config::Animation>,
+    ) -> Option<RemovedTile<W>> {
         let from_floating = self.floating_is_active.get();
         let removed = if from_floating {
             self.floating.remove_active_tile()?
         } else {
-            self.scrolling.remove_active_tile(transaction)?
+            self.scrolling
+                .remove_active_tile(transaction, anim_config)?
         };
 
         if let Some(output) = &self.output {
@@ -769,12 +857,19 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn remove_active_column(&mut self) -> Option<Column<W>> {
+        self.remove_active_column_with_anim_config(None)
+    }
+
+    pub fn remove_active_column_with_anim_config(
+        &mut self,
+        anim_config: Option<niri_config::Animation>,
+    ) -> Option<Column<W>> {
         let from_floating = self.floating_is_active.get();
         if from_floating {
             return None;
         }
 
-        let column = self.scrolling.remove_active_column()?;
+        let column = self.scrolling.remove_active_column(anim_config)?;
 
         if let Some(output) = &self.output {
             for (tile, _) in column.tiles() {
@@ -1412,7 +1507,7 @@ impl<W: LayoutElement> Workspace<W> {
                 self.floating_is_active = FloatingActive::No;
             }
         } else {
-            let mut removed = self.scrolling.remove_tile(&id, Transaction::new());
+            let mut removed = self.scrolling.remove_tile(&id, Transaction::new(), None);
             removed.tile.stop_move_animations();
 
             // Come up with a default floating position close to the tile position.
@@ -1635,6 +1730,20 @@ impl<W: LayoutElement> Workspace<W> {
         let scrolling_focus_ring = focus_ring && !self.floating_is_active();
         self.scrolling
             .render(ctx, xray_pos, scrolling_focus_ring, &mut |elem| {
+                push(elem.into())
+            });
+    }
+
+    pub fn render_lifted<R: NiriRenderer>(
+        &self,
+        ctx: RenderCtx<R>,
+        xray_pos: XrayPos,
+        focus_ring: bool,
+        push: &mut dyn FnMut(WorkspaceRenderElement<R>),
+    ) {
+        let scrolling_focus_ring = focus_ring && !self.floating_is_active();
+        self.scrolling
+            .render_lifted(ctx, xray_pos, scrolling_focus_ring, &mut |elem| {
                 push(elem.into())
             });
     }

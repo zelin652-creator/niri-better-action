@@ -12,7 +12,7 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::scrolling::{Column, ColumnWidth};
-use super::tile::Tile;
+use super::tile::{travel_settle_spring, Tile};
 use super::workspace::{
     compute_working_area, OutputId, Workspace, WorkspaceAddWindowTarget, WorkspaceId,
     WorkspaceRenderElement,
@@ -186,6 +186,7 @@ impl<'a, W: LayoutElement> Clone for MonitorAddWindowTarget<'a, W> {
 niri_render_elements! {
     MonitorInnerRenderElement<R> => {
         Workspace = CropRenderElement<WorkspaceRenderElement<R>>,
+        UncroppedWorkspace = WorkspaceRenderElement<R>,
         InsertHint = CropRenderElement<InsertHintRenderElement>,
         UncroppedInsertHint = InsertHintRenderElement,
         Shadow = ShadowRenderElement,
@@ -534,10 +535,21 @@ impl<W: LayoutElement> Monitor<W> {
         );
     }
 
-    pub fn add_column(&mut self, mut workspace_idx: usize, column: Column<W>, activate: bool) {
+    pub fn add_column(&mut self, workspace_idx: usize, column: Column<W>, activate: bool) {
+        self.add_column_with_anim_config(workspace_idx, column, activate, None);
+    }
+
+    /// `anim_config` also drives the workspace switch when `activate` is set.
+    fn add_column_with_anim_config(
+        &mut self,
+        mut workspace_idx: usize,
+        column: Column<W>,
+        activate: bool,
+        anim_config: Option<niri_config::Animation>,
+    ) {
         let workspace = &mut self.workspaces[workspace_idx];
 
-        workspace.add_column(column, activate);
+        workspace.add_column_with_anim_config(column, activate, anim_config);
 
         // After adding a new window, workspace becomes this output's own.
         if workspace.name().is_none() {
@@ -553,7 +565,7 @@ impl<W: LayoutElement> Monitor<W> {
         }
 
         if activate {
-            self.activate_workspace(workspace_idx);
+            self.activate_workspace_with_anim_config(workspace_idx, anim_config);
         }
     }
 
@@ -569,11 +581,44 @@ impl<W: LayoutElement> Monitor<W> {
         is_full_width: bool,
         is_floating: bool,
     ) {
+        self.add_tile_with_anim_config(
+            tile,
+            target,
+            activate,
+            allow_to_activate_workspace,
+            width,
+            is_full_width,
+            is_floating,
+            None,
+        );
+    }
+
+    /// `anim_config` also drives the workspace switch when the workspace gets activated.
+    #[allow(clippy::too_many_arguments)]
+    fn add_tile_with_anim_config(
+        &mut self,
+        tile: Tile<W>,
+        target: MonitorAddWindowTarget<W>,
+        activate: ActivateWindow,
+        allow_to_activate_workspace: bool,
+        width: ColumnWidth,
+        is_full_width: bool,
+        is_floating: bool,
+        anim_config: Option<niri_config::Animation>,
+    ) {
         let (mut workspace_idx, target) = self.resolve_add_window_target(target);
 
         let workspace = &mut self.workspaces[workspace_idx];
 
-        workspace.add_tile(tile, target, activate, width, is_full_width, is_floating);
+        workspace.add_tile_with_anim_config(
+            tile,
+            target,
+            activate,
+            width,
+            is_full_width,
+            is_floating,
+            anim_config,
+        );
 
         // After adding a new window, workspace becomes this output's own.
         if workspace.name().is_none() {
@@ -591,7 +636,7 @@ impl<W: LayoutElement> Monitor<W> {
         }
 
         if allow_to_activate_workspace && activate.map_smart(|| false) {
-            self.activate_workspace(workspace_idx);
+            self.activate_workspace_with_anim_config(workspace_idx, anim_config);
         }
     }
 
@@ -782,27 +827,78 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
-    pub fn move_to_workspace_up(&mut self, focus: bool) {
-        let source_workspace_idx = self.active_workspace_idx;
+    /// Where a scrolling window is drawn on the output right now, and its column travel scale.
+    fn window_visual_on_output(
+        &self,
+        workspace_idx: usize,
+        window: &W::Id,
+    ) -> Option<(Point<f64, Logical>, f64)> {
+        let geo = self.workspaces_render_geo().nth(workspace_idx)?;
+        let (pos, scale) = self.workspaces[workspace_idx].scrolling_window_visual(window)?;
+        Some((geo.loc + pos.upscale(self.overview_zoom()), scale))
+    }
 
-        let new_idx = source_workspace_idx.saturating_sub(1);
-        if new_idx == source_workspace_idx {
+    /// Start `window`, which just landed in workspace `workspace_id`, from where it was drawn on
+    /// the output before the move.
+    ///
+    /// Call this after the workspace switch has started, so the target geometry is the one on
+    /// screen this frame.
+    fn lift_into_workspace(
+        &mut self,
+        workspace_id: WorkspaceId,
+        window: &W::Id,
+        from: Option<(Point<f64, Logical>, f64)>,
+    ) {
+        let Some((from, from_scale)) = from else {
             return;
-        }
+        };
+        let Some(idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| ws.id() == workspace_id)
+        else {
+            return;
+        };
+        let geo = self.workspaces_render_geo().nth(idx).unwrap();
+        let from = (from - geo.loc).downscale(self.overview_zoom());
+        self.workspaces[idx].begin_lift(window, from, from_scale);
+    }
+
+    /// Moves a window to another workspace, carrying it there on screen the way a column move
+    /// carries a column past its neighbors.
+    fn move_tile_to_workspace_with_travel(
+        &mut self,
+        window: Option<&W::Id>,
+        source_workspace_idx: usize,
+        new_idx: usize,
+        activate: ActivateWindow,
+    ) {
         let new_id = self.workspaces[new_idx].id();
 
+        let Some(id) = window.cloned().or_else(|| {
+            self.workspaces[source_workspace_idx]
+                .active_window()
+                .map(|win| win.id().clone())
+        }) else {
+            return;
+        };
+        let from = self.window_visual_on_output(source_workspace_idx, &id);
+
+        // Floating windows are not carried, so they keep the configured animations.
+        let config = from.is_some().then(travel_settle_spring);
         let workspace = &mut self.workspaces[source_workspace_idx];
-        let Some(removed) = workspace.remove_active_tile(Transaction::new()) else {
+        let transaction = Transaction::new();
+        let removed = if window.is_some() {
+            workspace.remove_tile_with_anim_config(&id, transaction, config)
+        } else if let Some(removed) =
+            workspace.remove_active_tile_with_anim_config(transaction, config)
+        {
+            removed
+        } else {
             return;
         };
 
-        let activate = if focus {
-            ActivateWindow::Yes
-        } else {
-            ActivateWindow::Smart
-        };
-
-        self.add_tile(
+        self.add_tile_with_anim_config(
             removed.tile,
             MonitorAddWindowTarget::Workspace {
                 id: new_id,
@@ -813,7 +909,52 @@ impl<W: LayoutElement> Monitor<W> {
             removed.width,
             removed.is_full_width,
             removed.is_floating,
+            config,
         );
+
+        self.lift_into_workspace(new_id, &id, from);
+    }
+
+    /// Column counterpart of [`Self::move_tile_to_workspace_with_travel`].
+    fn move_column_to_workspace_with_travel(&mut self, new_idx: usize, activate: bool) {
+        let source_workspace_idx = self.active_workspace_idx;
+        let new_id = self.workspaces[new_idx].id();
+
+        let window = self.workspaces[source_workspace_idx]
+            .active_window()
+            .map(|win| win.id().clone());
+        let from = window
+            .as_ref()
+            .and_then(|id| self.window_visual_on_output(source_workspace_idx, id));
+
+        let config = from.is_some().then(travel_settle_spring);
+        let workspace = &mut self.workspaces[source_workspace_idx];
+        let Some(column) = workspace.remove_active_column_with_anim_config(config) else {
+            return;
+        };
+
+        self.add_column_with_anim_config(new_idx, column, activate, config);
+
+        if let Some(window) = window {
+            self.lift_into_workspace(new_id, &window, from);
+        }
+    }
+
+    pub fn move_to_workspace_up(&mut self, focus: bool) {
+        let source_workspace_idx = self.active_workspace_idx;
+
+        let new_idx = source_workspace_idx.saturating_sub(1);
+        if new_idx == source_workspace_idx {
+            return;
+        }
+
+        let activate = if focus {
+            ActivateWindow::Yes
+        } else {
+            ActivateWindow::Smart
+        };
+
+        self.move_tile_to_workspace_with_travel(None, source_workspace_idx, new_idx, activate);
     }
 
     pub fn move_to_workspace_down(&mut self, focus: bool) {
@@ -823,12 +964,6 @@ impl<W: LayoutElement> Monitor<W> {
         if new_idx == source_workspace_idx {
             return;
         }
-        let new_id = self.workspaces[new_idx].id();
-
-        let workspace = &mut self.workspaces[source_workspace_idx];
-        let Some(removed) = workspace.remove_active_tile(Transaction::new()) else {
-            return;
-        };
 
         let activate = if focus {
             ActivateWindow::Yes
@@ -836,18 +971,7 @@ impl<W: LayoutElement> Monitor<W> {
             ActivateWindow::Smart
         };
 
-        self.add_tile(
-            removed.tile,
-            MonitorAddWindowTarget::Workspace {
-                id: new_id,
-                column_idx: None,
-            },
-            activate,
-            true,
-            removed.width,
-            removed.is_full_width,
-            removed.is_floating,
-        );
+        self.move_tile_to_workspace_with_travel(None, source_workspace_idx, new_idx, activate);
     }
 
     pub fn move_to_workspace(
@@ -869,38 +993,16 @@ impl<W: LayoutElement> Monitor<W> {
         if new_idx == source_workspace_idx {
             return;
         }
-        let new_id = self.workspaces[new_idx].id();
-
         let activate = activate.map_smart(|| {
             window.is_none_or(|win| self.active_window().map(|win| win.id()) == Some(win))
         });
-
-        let workspace = &mut self.workspaces[source_workspace_idx];
-        let transaction = Transaction::new();
-        let removed = if let Some(window) = window {
-            workspace.remove_tile(window, transaction)
-        } else if let Some(removed) = workspace.remove_active_tile(transaction) {
-            removed
+        let activate = if activate {
+            ActivateWindow::Yes
         } else {
-            return;
+            ActivateWindow::No
         };
 
-        self.add_tile(
-            removed.tile,
-            MonitorAddWindowTarget::Workspace {
-                id: new_id,
-                column_idx: None,
-            },
-            if activate {
-                ActivateWindow::Yes
-            } else {
-                ActivateWindow::No
-            },
-            true,
-            removed.width,
-            removed.is_full_width,
-            removed.is_floating,
-        );
+        self.move_tile_to_workspace_with_travel(window, source_workspace_idx, new_idx, activate);
 
         if self.workspace_switch.is_none() {
             self.clean_up_workspaces();
@@ -921,11 +1023,7 @@ impl<W: LayoutElement> Monitor<W> {
             return;
         }
 
-        let Some(column) = workspace.remove_active_column() else {
-            return;
-        };
-
-        self.add_column(new_idx, column, activate);
+        self.move_column_to_workspace_with_travel(new_idx, activate);
     }
 
     pub fn move_column_to_workspace_down(&mut self, activate: bool) {
@@ -942,11 +1040,7 @@ impl<W: LayoutElement> Monitor<W> {
             return;
         }
 
-        let Some(column) = workspace.remove_active_column() else {
-            return;
-        };
-
-        self.add_column(new_idx, column, activate);
+        self.move_column_to_workspace_with_travel(new_idx, activate);
     }
 
     pub fn move_column_to_workspace(&mut self, idx: usize, activate: bool) {
@@ -968,11 +1062,7 @@ impl<W: LayoutElement> Monitor<W> {
             return;
         }
 
-        let Some(column) = workspace.remove_active_column() else {
-            return;
-        };
-
-        self.add_column(new_idx, column, activate);
+        self.move_column_to_workspace_with_travel(new_idx, activate);
     }
 
     pub fn switch_workspace_up(&mut self) {
@@ -1096,7 +1186,13 @@ impl<W: LayoutElement> Monitor<W> {
             .as_ref()
             .and_then(|hint| hint.workspace.existing_id());
 
-        for (ws, geo) in self.workspaces_with_render_geo_mut(true) {
+        let output_geo = Rectangle::from_size(self.view_size);
+        for (ws, geo) in self.workspaces_with_render_geo_mut(false) {
+            // A lifted column is drawn even when its workspace is off screen.
+            if geo.intersection(output_geo).is_none() && !ws.has_lifted() {
+                continue;
+            }
+
             ws.update_render_elements(is_active);
 
             if Some(ws.id()) == insert_hint_ws_id {
@@ -1719,6 +1815,19 @@ impl<W: LayoutElement> Monitor<W> {
                 Relocate::Relative,
             )
         };
+
+        // Columns arriving from another workspace go above everything else. They are usually
+        // outside their workspace's bounds, which may even be off screen and culled below.
+        for (ws, geo) in zip(self.workspaces.iter(), self.workspaces_render_geo()) {
+            if !ws.has_lifted() {
+                continue;
+            }
+            let xray_pos = XrayPos::new(geo.loc, zoom);
+            ws.render_lifted(ctx.r(), xray_pos, focus_ring, &mut |elem| {
+                let elem = MonitorInnerRenderElement::UncroppedWorkspace(elem);
+                push(scale_relocate(geo, elem));
+            });
+        }
 
         for (ws, geo) in self.workspaces_with_render_geo() {
             // Macro instead of closure because ws and insert hint have different elem types.

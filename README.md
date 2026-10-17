@@ -25,7 +25,7 @@
 
 [niri](https://github.com/niri-wm/niri) 是一个滚动平铺的 Wayland 合成器：窗口排成向右延伸的列，新窗口不会把已有窗口挤变形；每个显示器有自己的列带和工作区。
 
-**niri-better-action** 从 niri **v26.04**（`8ed0da4`）分出。配置、快捷键、IPC、多显示器、浮动窗口、标签、截图和门户投屏都与这一版上游相同。本仓库只改了移动列、以及在列内上下移动窗口时的过渡。
+**niri-better-action** 从 niri **v26.04**（`8ed0da4`）分出。配置、快捷键、IPC、多显示器、浮动窗口、标签、截图和门户投屏都与这一版上游相同。本仓库只改了移动列、在列内上下移动窗口，以及把窗口或列移到其他工作区时的过渡。
 
 ### 和原项目的区别
 
@@ -40,7 +40,16 @@
 
 列内上下交换窗口（`move-window-up` / `move-window-down`）时，被你移动的那个窗口会缩到 92% 再回到原尺寸；与它对调的窗口只做普通滑动。浮动窗口换位时，被移动的窗口同样先缩小再恢复。
 
-缩放只加在绘制上。左右移动列时，所有窗口绕正在移动的那个窗口的中心收拢。列内上下移动、以及浮动窗口换位时，只有被移动的窗口在缩小，中心就是它自己。布局尺寸、焦点和点击区域仍按未缩放的窗口计算。
+**移到上下工作区。** 上游把窗口或列移到另一个工作区时，它直接成为目标工作区的一部分，跟着目标工作区从下方或上方滑进来，只有目标工作区里原有的列会让位。这一支让它走和左右移动列一样的过程：
+
+1. 被移动的窗口浮在所有工作区之上，从它当前在屏幕上的位置沿直线走到目标位置。新旧位置都在屏幕内，所以它基本停在原地，最多水平错开一点，两个工作区从它身后滑过。
+2. 同一帧里，窗口以 420ms 的 ease-out cubic 缩到 92%，目标工作区的所有列也按这个比例朝它收拢，并让出位置。
+3. 工作区切换、视角平移、邻居列让位、源工作区补位和这段位移都用同一条 420ms 曲线。
+4. 全部停稳后，窗口再以 480ms 回到原尺寸。
+
+连按时同样从当前画面继续：再按一次会从窗口此刻的屏幕位置和缩放出发；离开的工作区里那些列也会缓回原尺寸，不会突然弹回。适用于 `move-column-to-workspace-up` / `-down`、`move-window-to-workspace-up` / `-down`、`move-window-down-or-to-workspace-down` / `move-window-up-or-to-workspace-up` 落到相邻工作区的那一步，以及按序号的 `move-column-to-workspace` / `move-window-to-workspace`。浮动窗口和移到其他显示器的操作保持上游行为。
+
+缩放只加在绘制上。左右移动列、以及跨工作区移动时，所有窗口绕正在移动的那个窗口的中心收拢。列内上下移动、以及浮动窗口换位时，只有被移动的窗口在缩小，中心就是它自己。布局尺寸、焦点和点击区域仍按未缩放的窗口计算。
 
 默认快捷键没有改动：
 
@@ -50,8 +59,9 @@
 | `move-column-right` | `Mod+Ctrl+Right`、`Mod+Ctrl+L` |
 | `move-window-up` / `move-window-down` | `Mod+Ctrl+Up` / `Down`，以及 `K` / `J` |
 | `move-column-to-first` / `move-column-to-last` | `Mod+Ctrl+Home` / `End` |
+| `move-column-to-workspace-down` / `-up` | `Mod+Ctrl+Page_Down` / `Page_Up`，以及 `U` / `I` |
 
-实现位于 `src/layout/scrolling.rs`（列的缩小、错开、恢复，以及连按时冻结当前位置）、`src/layout/tile.rs`（单窗口的缩放）和 `src/layout/floating.rs`（浮动窗口绘制同样的缩放）。
+实现位于 `src/layout/scrolling.rs`（列的缩小、错开、恢复，连按时冻结当前位置，以及跨工作区时的浮起位移）、`src/layout/monitor.rs`（跨工作区移动的起点计算，以及在所有工作区之上绘制浮起的列）、`src/layout/tile.rs`（单窗口的缩放）和 `src/layout/floating.rs`（浮动窗口绘制同样的缩放）。
 
 ### 基线与构建
 
@@ -74,7 +84,7 @@
 
 [niri](https://github.com/niri-wm/niri) is a scrollable-tiling Wayland compositor. Windows sit in columns on a strip that extends to the right, and opening a window does not resize the ones already there. Each monitor has its own strip and its own workspaces.
 
-**niri-better-action** forks niri **v26.04** (`8ed0da4`). Configuration, key bindings, IPC, multi-monitor layout, floating windows, tabs, the screenshot UI, and portal screencasting match that upstream release. This tree changes the motion used when a column moves left or right, and when a window moves up or down inside a column.
+**niri-better-action** forks niri **v26.04** (`8ed0da4`). Configuration, key bindings, IPC, multi-monitor layout, floating windows, tabs, the screenshot UI, and portal screencasting match that upstream release. This tree changes the motion used when a column moves left or right, when a window moves up or down inside a column, and when a window or column moves to another workspace.
 
 ### Differences from upstream niri
 
@@ -89,7 +99,16 @@ A further left/right press during the move or the grow — including move-to-fir
 
 `move-window-up` / `move-window-down` inside a column scales the window you moved down to 92% and back to full size. The window it swaps with only slides. Repositioning a floating window uses the same shrink-and-return on the window that moved.
 
-The scale is applied only while drawing. A left/right column move scales every window about the center of the window being moved. Moving a window up or down inside a column, or repositioning a floating window, scales only that window, about its own center. Layout size, focus, and hit testing still use the unscaled window.
+**Moving to the workspace above or below.** Upstream makes the window or column part of the target workspace right away, so it rides in from below or above together with that workspace, and only the columns already there make room. This fork plays the same sequence as a left/right column move:
+
+1. The moved window is drawn above every workspace and travels in a straight line from where it is on screen to its new slot. Both positions are on screen, so it mostly stays put, shifting sideways at most, while the two workspaces slide past behind it.
+2. On that frame the window eases to 92% with a 420ms ease-out cubic, and every column on the target workspace draws in toward it at the same scale while making room.
+3. The workspace switch, the view pan, the neighbors making room, the source workspace closing the gap, and the travel itself all share that 420ms curve.
+4. Once everything has settled, the window eases back to full size over 480ms.
+
+A repeated press continues from the current frame as well: the next move starts from the window's current on-screen position and scale, and the columns on the workspace it leaves ease back to full size instead of snapping. This covers `move-column-to-workspace-up` / `-down`, `move-window-to-workspace-up` / `-down`, the step of `move-window-down-or-to-workspace-down` / `move-window-up-or-to-workspace-up` that lands on the next workspace, and the by-index `move-column-to-workspace` / `move-window-to-workspace`. Floating windows and moves to another monitor keep the upstream behavior.
+
+The scale is applied only while drawing. A left/right column move, and a move to another workspace, scale every window about the center of the window being moved. Moving a window up or down inside a column, or repositioning a floating window, scales only that window, about its own center. Layout size, focus, and hit testing still use the unscaled window.
 
 The default bindings are unchanged:
 
@@ -99,8 +118,9 @@ The default bindings are unchanged:
 | `move-column-right` | `Mod+Ctrl+Right`, `Mod+Ctrl+L` |
 | `move-window-up` / `move-window-down` | `Mod+Ctrl+Up` / `Down`, and `K` / `J` |
 | `move-column-to-first` / `move-column-to-last` | `Mod+Ctrl+Home` / `End` |
+| `move-column-to-workspace-down` / `-up` | `Mod+Ctrl+Page_Down` / `Page_Up`, and `U` / `I` |
 
-The code lives in `src/layout/scrolling.rs` (column shrink, cross, grow, and holding the current position across repeated presses), `src/layout/tile.rs` (per-window scale), and `src/layout/floating.rs` (the same scale while drawing floating windows).
+The code lives in `src/layout/scrolling.rs` (column shrink, cross, grow, holding the current position across repeated presses, and the lifted offset for cross-workspace moves), `src/layout/monitor.rs` (the start point of a cross-workspace move, and drawing the lifted column above every workspace), `src/layout/tile.rs` (per-window scale), and `src/layout/floating.rs` (the same scale while drawing floating windows).
 
 ### Base and build
 
