@@ -656,6 +656,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_window_travel() {
+        let config = do_parse("");
+        assert_eq!(
+            config.animations.window_travel,
+            animations::WindowTravelAnim {
+                off: false,
+                scale: 0.88,
+            }
+        );
+
+        let config = do_parse("animations { window-travel { off; scale 0.95; } }");
+        assert!(config.animations.window_travel.off);
+        assert_eq!(config.animations.window_travel.scale, 0.95);
+
+        // Integers are accepted like everywhere else.
+        let config = do_parse("animations { window-travel { scale 1; } }");
+        assert_eq!(config.animations.window_travel.scale, 1.);
+
+        assert!(Config::parse_mem("animations { window-travel { scale 1.5; } }").is_err());
+        assert!(Config::parse_mem("animations { window-travel { scale -0.5; } }").is_err());
+    }
+
+    #[test]
     fn parse() {
         let parsed = do_parse(
             r##"
@@ -854,6 +877,10 @@ mod tests {
                 }
 
                 window-open { off; }
+
+                window-travel {
+                    scale 0.9
+                }
 
                 window-close {
                     curve "cubic-bezier" 0.05 0.7 0.1 1  
@@ -1563,6 +1590,10 @@ mod tests {
                         ),
                     },
                 ),
+                window_travel: WindowTravelAnim {
+                    off: false,
+                    scale: 0.9,
+                },
                 window_resize: WindowResizeAnim {
                     anim: Animation {
                         off: false,

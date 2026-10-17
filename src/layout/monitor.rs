@@ -12,7 +12,7 @@ use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::scrolling::{Column, ColumnWidth};
-use super::tile::{travel_settle_spring, Tile};
+use super::tile::{travel_enabled, travel_settle_spring, Tile};
 use super::workspace::{
     compute_working_area, OutputId, Workspace, WorkspaceAddWindowTarget, WorkspaceId,
     WorkspaceRenderElement,
@@ -827,12 +827,18 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
-    /// Where a scrolling window is drawn on the output right now, and its column travel scale.
+    /// Where a scrolling window is drawn on the output right now, and its travel scale.
+    ///
+    /// `None` when the travel visuals are off. The move then has nothing to carry, and goes
+    /// through the default animations like upstream.
     fn window_visual_on_output(
         &self,
         workspace_idx: usize,
         window: &W::Id,
     ) -> Option<(Point<f64, Logical>, f64)> {
+        if !travel_enabled(&self.options) {
+            return None;
+        }
         let geo = self.workspaces_render_geo().nth(workspace_idx)?;
         let (pos, scale) = self.workspaces[workspace_idx].scrolling_window_visual(window)?;
         Some((geo.loc + pos.upscale(self.overview_zoom()), scale))

@@ -38,6 +38,10 @@ animations {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
     }
 
+    window-travel {
+        scale 0.88
+    }
+
     window-resize {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
     }
@@ -314,6 +318,49 @@ This animation *does not* include the camera view movement, such as scrolling th
 animations {
     window-movement {
         spring damping-ratio=1.0 stiffness=800 epsilon=0.0001
+    }
+}
+```
+
+#### `window-travel`
+
+<sup>Since: 26.04 (niri-better-action)</sup>
+
+The shrink-and-close-in effect that this fork plays when you move a window or a column yourself.
+
+Includes:
+
+- Moving columns with `move-column-left`, `move-column-right`, `move-column-to-first`, `move-column-to-last` and `move-column-to-index`.
+- Moving windows inside a column with `move-window-up` and `move-window-down`.
+- Moving windows and columns to another workspace on the same monitor, such as with `move-column-to-workspace-down` or `move-window-to-workspace`.
+- Repositioning a floating window with the move actions.
+
+The moved window (or column) shrinks while it travels to its new place, then eases back to full size.
+The windows around it keep their size and close in on it from every side, keeping the gaps between windows the same.
+
+Unlike the other animations, this one does not take easing or spring parameters: it uses its own timing, a 420 ms ease-out for the shrink and the travel and a 480 ms ease-out for the return to full size.
+It only has these settings:
+
+- `scale`: how small the moved window gets, as a fraction of its full size, between 0 and 1.
+The default is 0.88.
+Set it to 1 to keep the eased travel without any shrinking.
+- `off`: play the plain `window-movement` animation instead, like upstream niri.
+
+Turning off `window-movement`, or all animations with the top-level `off`, also turns this effect off, and moves behave like upstream niri.
+
+```kdl
+animations {
+    window-travel {
+        scale 0.92
+    }
+}
+```
+
+```kdl
+animations {
+    // Back to the upstream column and window movement.
+    window-travel {
+        off
     }
 }
 ```

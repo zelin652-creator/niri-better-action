@@ -11,7 +11,7 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size};
 
 use super::closing_window::{ClosingWindow, ClosingWindowRenderElement};
 use super::scrolling::ColumnWidth;
-use super::tile::{Tile, TileRenderElement, TileRenderSnapshot};
+use super::tile::{travel_enabled, Tile, TileRenderElement, TileRenderSnapshot};
 use super::workspace::{InteractiveResize, ResolvedSize};
 use super::{
     ConfigureIntent, InteractiveResizeData, LayoutElement, Options, RemovedTile, SizeFrac,
@@ -1249,7 +1249,11 @@ impl<W: LayoutElement> FloatingSpace<W> {
 
         let diff = prev_pos - new_pos;
         if diff.x * diff.x + diff.y * diff.y > ANIMATION_THRESHOLD_SQ {
-            tile.animate_move_from_travel(prev_pos - new_pos);
+            if travel_enabled(&self.options) {
+                tile.animate_move_from_travel(prev_pos - new_pos);
+            } else {
+                tile.animate_move_from(prev_pos - new_pos);
+            }
         }
     }
 

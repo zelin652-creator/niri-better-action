@@ -772,7 +772,7 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    /// Where a scrolling window is drawn right now, and the column-level travel scale it is drawn
+    /// Where a scrolling window is drawn right now, and the travel scale it is drawn
     /// with. `None` for floating windows, which do not take part in the cross-workspace travel.
     pub fn scrolling_window_visual(&self, window: &W::Id) -> Option<(Point<f64, Logical>, f64)> {
         let pos = self.scrolling.window_visual_pos(window)?;

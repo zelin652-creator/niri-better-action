@@ -1,7 +1,7 @@
 <h1 align="center">niri-better-action</h1>
 
-<p align="center">基于 niri 的滚动平铺 Wayland 合成器。左右移动列时，窗口会先一起缩小、错开，再缓回原尺寸；连按从当前画面继续，而不是跳回静止布局。</p>
-<p align="center">A scrollable-tiling Wayland compositor based on niri. Moving a column left or right shrinks the windows together, slides them apart, then eases them back to full size. Another press continues from the picture on screen.</p>
+<p align="center">基于 niri 的滚动平铺 Wayland 合成器。移动窗口时，只有被移动的窗口缩小，四周的窗口保持原尺寸、贴着它向中间聚拢，再一起缓回原位；连按从当前画面继续，而不是跳回静止布局。</p>
+<p align="center">A scrollable-tiling Wayland compositor based on niri. Moving a window shrinks only that window while the windows around it keep their size and close in on it, then everything eases back. Another press continues from the picture on screen.</p>
 
 <p align="center">
     <a href="https://github.com/niri-wm/niri"><img alt="Upstream" src="https://img.shields.io/badge/upstream-niri--wm%2Fniri-blue"></a>
@@ -25,7 +25,7 @@
 
 [niri](https://github.com/niri-wm/niri) 是一个滚动平铺的 Wayland 合成器：窗口排成向右延伸的列，新窗口不会把已有窗口挤变形；每个显示器有自己的列带和工作区。
 
-**niri-better-action** 从 niri **v26.04**（`8ed0da4`）分出。配置、快捷键、IPC、多显示器、浮动窗口、标签、截图和门户投屏都与这一版上游相同。本仓库只改了移动列、在列内上下移动窗口，以及把窗口或列移到其他工作区时的过渡。
+**niri-better-action** 从 niri **v26.04**（`8ed0da4`）分出。配置、快捷键、IPC、多显示器、浮动窗口、标签、截图和门户投屏都与这一版上游相同，只多了一个动画配置项 `animations.window-travel`。本仓库只改了移动列、在列内上下移动窗口，以及把窗口或列移到其他工作区时的过渡。
 
 ### 和原项目的区别
 
@@ -33,23 +33,34 @@
 
 这一支把左右移动列做成同时进行的缩小和错开，再恢复尺寸，并让连按沿着当前画面继续：
 
-1. **缩小并错开。** 按下的同一帧里，被移动的列以 420ms 的 ease-out cubic 收到自身的 92%（`TRAVEL_SCALE_MIN`），该工作区上的每一列都按这个比例绘制，并朝正在移动的那个窗口的中心收拢，而不是各自绕自己的中心缩小。邻居列、被移动的列和视角也在这一帧用同一条 420ms ease-out cubic 滑向新的列顺序，不会等缩小结束。视角和列位移用同一条曲线，避免列先漂开再突然对齐。
-2. **恢复。** 列的位置和视角都停稳之后，被移动的列再以 480ms 的 ease-out cubic 回到 100%。恢复阶段没有弹簧过冲。
+1. **缩小、聚拢并错开。** 按下的同一帧里，被移动的列以 420ms 的 ease-out cubic 绕正在移动的那个窗口的中心收到自身的 88%（可用 `animations.window-travel.scale` 调整）。其他列不缩放，保持原尺寸，只是整体平移，贴着被移动列缩进去的边缘跟过去，所以它们之间的间距始终不变：左边的列一起右移，右边的列一起左移。效果参考 macOS 从全屏空间退出到桌面时窗口收进去的样子。邻居列、被移动的列和视角也在这一帧用同一条 420ms ease-out cubic 滑向新的列顺序，不会等缩小结束。视角和列位移用同一条曲线，避免列先漂开再突然对齐。
+2. **恢复。** 列的位置和视角都停稳之后，被移动的列再以 480ms 的 ease-out cubic 回到 100%，四周的列同步平移回原位。恢复阶段没有弹簧过冲。
 
-在缩小、错开或恢复的过程中再按一次左/右，或使用「移到第一列 / 最后一列 / 指定序号」，会先记下每一列当时的屏幕位置和当前缩放，并立刻从那里继续滑动。画面保持在你看到的位置上，再走向新顺序，不会先停住等再缩小一轮。
+在缩小、错开或恢复的过程中再按一次左/右，或使用「移到第一列 / 最后一列 / 指定序号」，会先记下每一列当时的屏幕位置（包括聚拢的平移）和当前缩放，并立刻从那里继续滑动。画面保持在你看到的位置上，再走向新顺序，不会先停住等再缩小一轮；换到被移动列另一侧的邻居也不会因为聚拢方向反过来而跳一下。
 
-列内上下交换窗口（`move-window-up` / `move-window-down`）时，被你移动的那个窗口会缩到 92% 再回到原尺寸；与它对调的窗口只做普通滑动。浮动窗口换位时，被移动的窗口同样先缩小再恢复。
+列内上下交换窗口（`move-window-up` / `move-window-down`）时，被你移动的那个窗口会缩到 88% 再回到原尺寸。四个方向都向它聚拢：同一列里上方的窗口下移、下方的窗口上移，左右两侧的列水平靠过来，全都保持原尺寸和原间距。与它对调的窗口照常滑到新位置。浮动窗口换位时，被移动的窗口同样先缩小再恢复，其他浮动窗口不动。
 
 **移到上下工作区。** 上游把窗口或列移到另一个工作区时，它直接成为目标工作区的一部分，跟着目标工作区从下方或上方滑进来，只有目标工作区里原有的列会让位。这一支让它走和左右移动列一样的过程：
 
 1. 被移动的窗口浮在所有工作区之上，从它当前在屏幕上的位置沿直线走到目标位置。新旧位置都在屏幕内，所以它基本停在原地，最多水平错开一点，两个工作区从它身后滑过。
-2. 同一帧里，窗口以 420ms 的 ease-out cubic 缩到 92%，目标工作区的所有列也按这个比例朝它收拢，并让出位置。
+2. 同一帧里，窗口以 420ms 的 ease-out cubic 缩到 88%，目标工作区的列保持原尺寸，一边让出位置，一边贴着它的边缘聚拢过来。
 3. 工作区切换、视角平移、邻居列让位、源工作区补位和这段位移都用同一条 420ms 曲线。
 4. 全部停稳后，窗口再以 480ms 回到原尺寸。
 
-连按时同样从当前画面继续：再按一次会从窗口此刻的屏幕位置和缩放出发；离开的工作区里那些列也会缓回原尺寸，不会突然弹回。适用于 `move-column-to-workspace-up` / `-down`、`move-window-to-workspace-up` / `-down`、`move-window-down-or-to-workspace-down` / `move-window-up-or-to-workspace-up` 落到相邻工作区的那一步，以及按序号的 `move-column-to-workspace` / `move-window-to-workspace`。浮动窗口和移到其他显示器的操作保持上游行为。
+连按时同样从当前画面继续：再按一次会从窗口此刻的屏幕位置和缩放出发；离开的工作区里那些列从聚拢的位置平移回原位，不会突然弹回。适用于 `move-column-to-workspace-up` / `-down`、`move-window-to-workspace-up` / `-down`、`move-window-down-or-to-workspace-down` / `move-window-up-or-to-workspace-up` 落到相邻工作区的那一步，以及按序号的 `move-column-to-workspace` / `move-window-to-workspace`。浮动窗口和移到其他显示器的操作保持上游行为。
 
-缩放只加在绘制上。左右移动列、以及跨工作区移动时，所有窗口绕正在移动的那个窗口的中心收拢。列内上下移动、以及浮动窗口换位时，只有被移动的窗口在缩小，中心就是它自己。布局尺寸、焦点和点击区域仍按未缩放的窗口计算。
+缩放和聚拢的平移只加在绘制上，并且只有被移动的窗口（左右移动或跨工作区时是它所在的整列）会缩放。左右移动列和跨工作区移动时，它绕正在移动的那个窗口的中心缩小；列内上下移动和浮动窗口换位时，绕它自己的中心缩小。布局尺寸、焦点和点击区域仍按未缩放、未平移的窗口计算。
+
+**配置。** 缩小比例可以在 `animations` 里调整，范围 0 到 1，设为 1 则只保留缓动的位移、不缩小。放一个 `off` 进去，或者关掉 `window-movement` 动画、用顶层 `off` 关掉全部动画时，这些移动都退回上游的行为：直接用 `window-movement` 滑动，不缩小、不聚拢，跨工作区时也不浮起。详见 [`docs/wiki/Configuration:-Animations.md`](docs/wiki/Configuration:-Animations.md) 中的 `window-travel` 一节。
+
+```kdl
+animations {
+    window-travel {
+        scale 0.88   // 默认值
+        // off       // 退回上游的移动动画
+    }
+}
+```
 
 默认快捷键没有改动：
 
@@ -84,7 +95,7 @@
 
 [niri](https://github.com/niri-wm/niri) is a scrollable-tiling Wayland compositor. Windows sit in columns on a strip that extends to the right, and opening a window does not resize the ones already there. Each monitor has its own strip and its own workspaces.
 
-**niri-better-action** forks niri **v26.04** (`8ed0da4`). Configuration, key bindings, IPC, multi-monitor layout, floating windows, tabs, the screenshot UI, and portal screencasting match that upstream release. This tree changes the motion used when a column moves left or right, when a window moves up or down inside a column, and when a window or column moves to another workspace.
+**niri-better-action** forks niri **v26.04** (`8ed0da4`). Configuration, key bindings, IPC, multi-monitor layout, floating windows, tabs, the screenshot UI, and portal screencasting match that upstream release, apart from one added animation setting, `animations.window-travel`. This tree changes the motion used when a column moves left or right, when a window moves up or down inside a column, and when a window or column moves to another workspace.
 
 ### Differences from upstream niri
 
@@ -92,23 +103,34 @@ Upstream `move-column-left` / `move-column-right` reorders the columns, then sli
 
 This fork plays a left/right column move as a shrink and a slide together, then a return to full size. A repeated press continues from the current frame:
 
-1. **Shrink and cross.** On the frame the key is pressed, the moved column eases to 92% of its size (`TRAVEL_SCALE_MIN`) with a 420ms ease-out cubic, and every column on that workspace is drawn at the same scale. The scale is about the center of the window being moved, so the other windows draw in toward it instead of each shrinking around its own center. The neighboring columns, the moved column, and the view also start easing to the new column order on that frame with the same 420ms ease-out cubic. The slide does not wait for the shrink. The view and the column offsets share that curve, so a column does not drift and then jump into alignment.
-2. **Grow.** After the column positions and the view have settled, the moved column eases back to 100% with a 480ms ease-out cubic. This return does not overshoot.
+1. **Shrink, close in, and cross.** On the frame the key is pressed, the moved column eases to 88% of its size (adjustable with `animations.window-travel.scale`) with a 420ms ease-out cubic, about the center of the window being moved. The other columns do not scale. They keep their size and shift as a group to follow the moved column's edges as they pull in, so the gaps between windows stay the same: the columns on the left shift right and the columns on the right shift left. The look is modeled on a macOS window shrinking back onto the desktop as it leaves a full-screen space. The neighboring columns, the moved column, and the view also start easing to the new column order on that frame with the same 420ms ease-out cubic. The slide does not wait for the shrink. The view and the column offsets share that curve, so a column does not drift and then jump into alignment.
+2. **Grow.** After the column positions and the view have settled, the moved column eases back to 100% with a 480ms ease-out cubic, and the columns around it shift back with it. This return does not overshoot.
 
-A further left/right press during the move or the grow — including move-to-first, move-to-last, and move-to-index — records each column's on-screen position and the current scale, then continues the slide from there immediately. The picture stays where you see it, then moves toward the new order, without parking until the column shrinks again.
+A further left/right press during the move or the grow — including move-to-first, move-to-last, and move-to-index — records each column's on-screen position, including the shift toward the moved column, and the current scale, then continues the slide from there immediately. The picture stays where you see it, then moves toward the new order, without parking until the column shrinks again. A neighbor that ends up on the other side of the moved column does not jump when its shift changes direction.
 
-`move-window-up` / `move-window-down` inside a column scales the window you moved down to 92% and back to full size. The window it swaps with only slides. Repositioning a floating window uses the same shrink-and-return on the window that moved.
+`move-window-up` / `move-window-down` inside a column scales the window you moved down to 88% and back to full size. Everything around it closes in from all four sides: the windows above it in the column shift down, the ones below shift up, and the columns on either side shift toward it, all at their own size and with the gaps unchanged. The window it swaps with slides to its new place as usual. Repositioning a floating window uses the same shrink-and-return on the window that moved; the other floating windows stay put.
 
 **Moving to the workspace above or below.** Upstream makes the window or column part of the target workspace right away, so it rides in from below or above together with that workspace, and only the columns already there make room. This fork plays the same sequence as a left/right column move:
 
 1. The moved window is drawn above every workspace and travels in a straight line from where it is on screen to its new slot. Both positions are on screen, so it mostly stays put, shifting sideways at most, while the two workspaces slide past behind it.
-2. On that frame the window eases to 92% with a 420ms ease-out cubic, and every column on the target workspace draws in toward it at the same scale while making room.
+2. On that frame the window eases to 88% with a 420ms ease-out cubic. The columns on the target workspace keep their size, make room for it, and close in on its edges.
 3. The workspace switch, the view pan, the neighbors making room, the source workspace closing the gap, and the travel itself all share that 420ms curve.
 4. Once everything has settled, the window eases back to full size over 480ms.
 
-A repeated press continues from the current frame as well: the next move starts from the window's current on-screen position and scale, and the columns on the workspace it leaves ease back to full size instead of snapping. This covers `move-column-to-workspace-up` / `-down`, `move-window-to-workspace-up` / `-down`, the step of `move-window-down-or-to-workspace-down` / `move-window-up-or-to-workspace-up` that lands on the next workspace, and the by-index `move-column-to-workspace` / `move-window-to-workspace`. Floating windows and moves to another monitor keep the upstream behavior.
+A repeated press continues from the current frame as well: the next move starts from the window's current on-screen position and scale, and the columns on the workspace it leaves slide back from where they had closed in instead of snapping. This covers `move-column-to-workspace-up` / `-down`, `move-window-to-workspace-up` / `-down`, the step of `move-window-down-or-to-workspace-down` / `move-window-up-or-to-workspace-up` that lands on the next workspace, and the by-index `move-column-to-workspace` / `move-window-to-workspace`. Floating windows and moves to another monitor keep the upstream behavior.
 
-The scale is applied only while drawing. A left/right column move, and a move to another workspace, scale every window about the center of the window being moved. Moving a window up or down inside a column, or repositioning a floating window, scales only that window, about its own center. Layout size, focus, and hit testing still use the unscaled window.
+The scale and the closing-in shift are applied only while drawing, and only the moved window scales (its whole column, for a left/right or cross-workspace move). A left/right column move and a move to another workspace scale it about the center of the window being moved. Moving a window up or down inside a column, or repositioning a floating window, scales it about its own center. Layout size, focus, and hit testing still use the unscaled, unshifted windows.
+
+**Configuration.** The shrink can be adjusted inside `animations`, between 0 and 1; 1 keeps the eased travel without shrinking. Putting `off` inside, turning off the `window-movement` animation, or turning off all animations with the top-level `off` brings back the upstream behavior for all of these moves: a plain `window-movement` slide, with no shrink, no closing in, and no lift across workspaces. See the `window-travel` section of [`docs/wiki/Configuration:-Animations.md`](docs/wiki/Configuration:-Animations.md).
+
+```kdl
+animations {
+    window-travel {
+        scale 0.88   // the default
+        // off       // use the upstream movement instead
+    }
+}
+```
 
 The default bindings are unchanged:
 

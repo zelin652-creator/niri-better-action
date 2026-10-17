@@ -15,8 +15,8 @@ use super::closing_window::{ClosingWindow, ClosingWindowRenderElement};
 use super::monitor::InsertPosition;
 use super::tab_indicator::{TabIndicator, TabIndicatorRenderElement, TabInfo};
 use super::tile::{
-    new_travel_scale_anim, travel_settle_spring, travel_spring, Tile, TileRenderElement,
-    TileRenderSnapshot, TRAVEL_SCALE_MIN,
+    new_travel_scale_anim, travel_enabled, travel_min_scale, travel_settle_spring, travel_spring,
+    Tile, TileRenderElement, TileRenderSnapshot,
 };
 use super::workspace::{InteractiveResize, ResolvedSize};
 use super::{ConfigureIntent, HitType, InteractiveResizeData, LayoutElement, Options, RemovedTile};
@@ -99,18 +99,64 @@ pub struct ScrollingSpace<W: LayoutElement> {
 
     /// Staged visual for a column the user moved left or right, or into this workspace.
     column_travel: Option<ColumnTravel>,
-
-    /// Shared scale left behind when the traveling column moved to another workspace.
-    residual_travel: Option<ResidualTravel>,
 }
 
-/// Lets the remaining columns ease back to full size instead of snapping when the column they
-/// were shrinking toward leaves.
-#[derive(Debug)]
-struct ResidualTravel {
-    anim: Animation,
-    /// View-relative point the columns scale about.
-    pivot: Point<f64, Logical>,
+/// Draw-only offsets that pull the other windows in toward a shrinking moved window.
+///
+/// Only the moved window (or column) scales. Everything around it keeps its size and shifts by
+/// however far the moved window's facing edge has moved in, so the gaps stay the same. The
+/// offsets follow the moved window's scale, so they share its curve and need no state of their
+/// own.
+#[derive(Debug, Clone, Copy)]
+struct TravelGather {
+    col_idx: usize,
+    /// `None` when the whole column is moving; `Some` for a window moving inside its column.
+    tile_idx: Option<usize>,
+    /// How far the columns to the left shift right.
+    left: f64,
+    /// How far the columns to the right shift left.
+    right: f64,
+    /// How far the windows above, in the same column, shift down.
+    up: f64,
+    /// How far the windows below, in the same column, shift up.
+    down: f64,
+}
+
+impl TravelGather {
+    fn offset(&self, col_idx: usize, tile_idx: usize) -> Point<f64, Logical> {
+        let (x, y) = if col_idx < self.col_idx {
+            (self.left, 0.)
+        } else if col_idx > self.col_idx {
+            (-self.right, 0.)
+        } else {
+            match self.tile_idx {
+                Some(subject) if tile_idx < subject => (0., self.up),
+                Some(subject) if tile_idx > subject => (0., -self.down),
+                _ => (0., 0.),
+            }
+        };
+        Point::from((x, y))
+    }
+}
+
+/// Per-frame travel state for drawing. See [`ScrollingSpace::travel_render`].
+#[derive(Debug, Clone, Copy)]
+struct TravelRender {
+    gather: Option<TravelGather>,
+    /// Index, scale and physical pivot of the column being moved.
+    column_scale: Option<(usize, f64, Point<i32, Physical>)>,
+}
+
+/// Index of the `i`th item of a "active first, then the rest in order" sequence, such as
+/// [`ScrollingSpace::columns_in_render_order`] or [`Column::tiles_in_render_order`].
+fn render_order_idx(i: usize, active_idx: usize) -> usize {
+    if i == 0 {
+        active_idx
+    } else if i <= active_idx {
+        i - 1
+    } else {
+        i
+    }
 }
 
 /// Cross past the other columns while shrinking, then ease the moved column back to full size.
@@ -366,7 +412,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             clock,
             options,
             column_travel: None,
-            residual_travel: None,
         }
     }
 
@@ -440,14 +485,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
         self.advance_column_travel();
 
-        if self
-            .residual_travel
-            .as_ref()
-            .is_some_and(|residual| residual.anim.is_done())
-        {
-            self.residual_travel = None;
-        }
-
         self.closing_windows.retain_mut(|closing| {
             closing.advance_animations();
             closing.are_animations_ongoing()
@@ -457,14 +494,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub fn are_animations_ongoing(&self) -> bool {
         self.view_offset.is_animation_ongoing()
             || self.columns.iter().any(Column::are_animations_ongoing)
-            || self.residual_travel.is_some()
             || !self.closing_windows.is_empty()
     }
 
     pub fn are_transitions_ongoing(&self) -> bool {
         !self.view_offset.is_static()
             || self.columns.iter().any(Column::are_transitions_ongoing)
-            || self.residual_travel.is_some()
             || !self.closing_windows.is_empty()
     }
 
@@ -1153,6 +1188,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             };
         }
 
+        let gather_before = self.gather_snapshot();
+
         let column = &mut self.columns[column_idx];
         let prev_width = self.data[column_idx].width;
 
@@ -1234,6 +1271,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             }
         }
 
+        self.bake_gather(gather_before, movement_config, true);
+
         tile
     }
 
@@ -1253,6 +1292,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         column_idx: usize,
         anim_config: Option<niri_config::Animation>,
     ) -> Column<W> {
+        let gather_before = self.gather_snapshot();
+
         // Animate movement of the other columns.
         let movement_config = anim_config.unwrap_or(self.options.animations.window_movement.0);
         let offset = self.column_x(column_idx + 1) - self.column_x(column_idx);
@@ -1266,7 +1307,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             }
         }
 
-        let pivot = self.travel_pivot();
         let mut column = self.columns.remove(column_idx);
         self.data.remove(column_idx);
         column.lift = None;
@@ -1274,13 +1314,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         match self.column_travel {
             Some(travel) if travel.idx == column_idx => {
                 self.column_travel = None;
-                let factor = column.travel_scale();
-                if let Some((_, pivot)) = pivot.filter(|_| (factor - 1.).abs() > 0.001) {
-                    self.residual_travel = Some(ResidualTravel {
-                        anim: new_travel_scale_anim(&self.clock, factor, 1., travel_spring()),
-                        pivot,
-                    });
-                }
                 // Wherever the column lands next either picks this up as a new shrink or lets
                 // it finish here, rather than parking at the travel minimum.
                 if column.travel_scale_anim.is_some() {
@@ -1295,6 +1328,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             }
             _ => (),
         }
+
+        // The other columns were drawn pulled in toward the moved window. Slide them back from
+        // there instead of snapping when it leaves.
+        self.bake_gather(gather_before, movement_config, true);
 
         // Stop interactive resize.
         if let Some(resize) = &self.interactive_resize {
@@ -1816,7 +1853,21 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     pub fn window_visual_pos(&self, window: &W::Id) -> Option<Point<f64, Logical>> {
         let col_idx = self.columns.iter().position(|col| col.contains(window))?;
         let tile_idx = self.columns[col_idx].position(window)?;
-        Some(self.tile_visual_pos(col_idx, tile_idx))
+        let gather = self
+            .travel_gather()
+            .map_or(Point::from((0., 0.)), |gather| gather.offset(col_idx, tile_idx));
+        Some(self.tile_visual_pos(col_idx, tile_idx) + gather)
+    }
+
+    /// Draw-only pull toward the moved window that `window` is shifted by right now.
+    #[cfg(test)]
+    pub fn window_travel_pull(&self, window: &W::Id) -> Option<Point<f64, Logical>> {
+        let col_idx = self.columns.iter().position(|col| col.contains(window))?;
+        let tile_idx = self.columns[col_idx].position(window)?;
+        Some(
+            self.travel_gather()
+                .map_or(Point::from((0., 0.)), |gather| gather.offset(col_idx, tile_idx)),
+        )
     }
 
     fn tile_visual_pos(&self, col_idx: usize, tile_idx: usize) -> Point<f64, Logical> {
@@ -1828,13 +1879,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             + col.tiles[tile_idx].render_offset()
     }
 
-    /// Column-level travel scale a window is drawn with right now.
+    /// Travel scale a window is drawn with right now.
     pub fn window_travel_scale(&self, window: &W::Id) -> Option<f64> {
         let col = self.columns.iter().find(|col| col.contains(window))?;
-        Some(
-            self.shared_travel()
-                .map_or_else(|| col.travel_scale(), |(factor, _)| factor),
-        )
+        let tile = &col.tiles[col.position(window)?];
+        Some(col.travel_scale().min(tile.travel_scale()))
     }
 
     pub fn has_lifted(&self) -> bool {
@@ -1851,6 +1900,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return;
         };
 
+        // The arriving column carries its own start point in `from`; only the columns around it
+        // need to ease into their pull toward it.
+        let mut gather_before = self.gather_snapshot();
+        gather_before.retain(|(id, _)| !self.columns[idx].contains(id));
+
         let col = &mut self.columns[idx];
         // The visual start point already includes whatever offset the column carried over.
         col.move_animation = None;
@@ -1858,7 +1912,6 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let tile_idx = col.position(window).unwrap();
         let to = self.tile_visual_pos(idx, tile_idx);
 
-        self.residual_travel = None;
         for (i, col) in self.columns.iter_mut().enumerate() {
             if i != idx {
                 col.clear_travel_scale();
@@ -1873,16 +1926,18 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         col.travel_scale_anim = Some(new_travel_scale_anim(
             &self.clock,
             from_scale,
-            TRAVEL_SCALE_MIN,
+            travel_min_scale(&self.options),
             travel_settle_spring(),
         ));
         self.column_travel = Some(ColumnTravel {
             idx,
             phase: ColumnTravelPhase::Cross,
         });
+
+        self.bake_gather(gather_before, travel_settle_spring(), true);
     }
 
-    /// Scale and view-relative pivot every column follows while a column travels.
+    /// Scale and view-relative pivot of the column being moved.
     fn travel_pivot(&self) -> Option<(f64, Point<f64, Logical>)> {
         let travel = self.column_travel?;
         let col = self.columns.get(travel.idx)?;
@@ -1890,6 +1945,124 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let size = col.tiles[col.active_tile_idx].animated_tile_size();
         let center = tile_pos + Point::from((size.w / 2., size.h / 2.));
         Some((col.travel_scale(), center))
+    }
+
+    /// Pull toward column `idx` as if it were the column being moved, at its current scale.
+    fn column_gather(&self, idx: usize) -> TravelGather {
+        let col = &self.columns[idx];
+        let tile_idx = col.active_tile_idx;
+        let tile = &col.tiles[tile_idx];
+        // Matches travel_pivot(): the column scales about the active window's center.
+        let center_x = col.tile_offset(tile_idx).x
+            + tile.render_offset().x
+            + tile.animated_tile_size().w / 2.;
+        let shrink = 1. - col.travel_scale();
+        TravelGather {
+            col_idx: idx,
+            tile_idx: None,
+            left: shrink * center_x,
+            right: shrink * (col.width() - center_x),
+            up: 0.,
+            down: 0.,
+        }
+    }
+
+    /// Window moving up or down inside its column, if one is still scaled.
+    fn tile_travel_subject(&self) -> Option<(usize, usize)> {
+        let is_subject = |col: &Column<W>, tile_idx: usize| {
+            (col.tiles[tile_idx].travel_scale() - 1.).abs() > 1e-6
+        };
+        if let Some(col) = self.columns.get(self.active_column_idx) {
+            if is_subject(col, col.active_tile_idx) {
+                return Some((self.active_column_idx, col.active_tile_idx));
+            }
+        }
+        self.columns.iter().enumerate().find_map(|(col_idx, col)| {
+            (0..col.tiles.len())
+                .find(|&tile_idx| is_subject(col, tile_idx))
+                .map(|tile_idx| (col_idx, tile_idx))
+        })
+    }
+
+    /// How the windows around the one being moved are pulled in toward it right now.
+    fn travel_gather(&self) -> Option<TravelGather> {
+        if let Some(travel) = self.column_travel {
+            if travel.idx < self.columns.len() {
+                return Some(self.column_gather(travel.idx));
+            }
+            return None;
+        }
+
+        let (col_idx, tile_idx) = self.tile_travel_subject()?;
+        let tile = &self.columns[col_idx].tiles[tile_idx];
+        let size = tile.animated_tile_size();
+        let shrink = 1. - tile.travel_scale();
+        Some(TravelGather {
+            col_idx,
+            tile_idx: Some(tile_idx),
+            left: shrink * size.w / 2.,
+            right: shrink * size.w / 2.,
+            up: shrink * size.h / 2.,
+            down: shrink * size.h / 2.,
+        })
+    }
+
+    /// Current pull of every window, to keep the picture still across an operation that changes
+    /// who is pulled where. See [`Self::bake_gather`].
+    fn gather_snapshot(&self) -> Vec<(W::Id, Point<f64, Logical>)> {
+        let Some(gather) = self.travel_gather() else {
+            return Vec::new();
+        };
+        let mut rv = Vec::new();
+        for (col_idx, col) in self.columns.iter().enumerate() {
+            for (tile_idx, tile) in col.tiles.iter().enumerate() {
+                let offset = gather.offset(col_idx, tile_idx);
+                if offset != Point::from((0., 0.)) {
+                    rv.push((tile.window().id().clone(), offset));
+                }
+            }
+        }
+        rv
+    }
+
+    /// Moves every window's change in pull since `before` into its move animation, so the
+    /// windows stay where they were drawn and ease to the new pull instead of jumping.
+    ///
+    /// Column offsets go to the column move, and are skipped when `bake_x` is false for callers
+    /// that already account for them.
+    fn bake_gather(
+        &mut self,
+        before: Vec<(W::Id, Point<f64, Logical>)>,
+        config: niri_config::Animation,
+        bake_x: bool,
+    ) {
+        let after = self.travel_gather();
+        if before.is_empty() && after.is_none() {
+            return;
+        }
+
+        for (col_idx, col) in self.columns.iter_mut().enumerate() {
+            let mut col_dx = None;
+            for (tile_idx, tile) in col.tiles.iter_mut().enumerate() {
+                let old = before
+                    .iter()
+                    .find(|(id, _)| id == tile.window().id())
+                    .map_or(Point::from((0., 0.)), |(_, offset)| *offset);
+                let new = after.map_or(Point::from((0., 0.)), |gather| {
+                    gather.offset(col_idx, tile_idx)
+                });
+                let delta = old - new;
+                if delta.y.abs() > 0.01 {
+                    tile.animate_move_y_from_with_config(delta.y, config);
+                }
+                // Every window of a column has the same horizontal pull.
+                col_dx.get_or_insert(delta.x);
+            }
+
+            if let Some(dx) = col_dx.filter(|dx| bake_x && dx.abs() > 0.01) {
+                col.animate_move_from_with_config(dx, config);
+            }
+        }
     }
 
     fn advance_column_travel(&mut self) {
@@ -1933,10 +2106,21 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return;
         }
 
-        // Snapshot where every column actually is on screen, including an in-flight travel.
-        // The next move holds that picture instead of snapping back to the layout position.
+        if !travel_enabled(&self.options) {
+            self.move_column_to_without_travel(new_idx);
+            return;
+        }
+
+        // Snapshot where every column actually is on screen, including an in-flight travel and
+        // the pull toward the moved window. The next move holds that picture instead of
+        // snapping back to the layout position.
+        let gather_before = self.gather_snapshot();
+        let old_gather = self.travel_gather();
         let mut visual_x: Vec<f64> = (0..self.columns.len())
-            .map(|i| self.column_x(i) + self.columns[i].render_offset().x)
+            .map(|i| {
+                let pull = old_gather.map_or(0., |gather| gather.offset(i, 0).x);
+                self.column_x(i) + self.columns[i].render_offset().x + pull
+            })
             .collect();
         let moved_visual = visual_x.remove(self.active_column_idx);
         visual_x.insert(new_idx, moved_visual);
@@ -1953,9 +2137,14 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let view_offset_delta = -self.column_x(self.active_column_idx) + current_col_x;
         self.view_offset.offset(view_offset_delta);
 
+        // The pull toward the moved column on the first frame after the move. Its scale carries
+        // on from the current value, so this is what the columns will be drawn with. A column
+        // that crossed over to the other side now gets pulled the opposite way; the hold takes
+        // up that difference.
+        let new_gather = self.column_gather(new_idx);
         let layout_x: Vec<f64> = (0..self.columns.len()).map(|i| self.column_x(i)).collect();
         for (i, col) in self.columns.iter_mut().enumerate() {
-            let offset = visual_x[i] - layout_x[i];
+            let offset = visual_x[i] - layout_x[i] - new_gather.offset(i, 0).x;
             if i == new_idx || col.is_travel_move() || offset.abs() > 0.5 {
                 col.freeze_move(offset);
             }
@@ -1984,6 +2173,49 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             idx: new_idx,
             phase: ColumnTravelPhase::Cross,
         });
+
+        // A window that was moving up or down pulled its column neighbors vertically. That pull
+        // ends now that the whole column is moving, so let them slide back from it.
+        self.bake_gather(gather_before, travel_settle_spring(), false);
+    }
+
+    /// Upstream column move: reorder, then slide everything with `window-movement`.
+    fn move_column_to_without_travel(&mut self, new_idx: usize) {
+        // Only left over if the travel was turned off in the config while it was playing.
+        if self.column_travel.is_some() {
+            self.cancel_column_travel();
+        }
+
+        let current_col_x = self.column_x(self.active_column_idx);
+        let next_col_x = self.column_x(self.active_column_idx + 1);
+
+        let mut column = self.columns.remove(self.active_column_idx);
+        let data = self.data.remove(self.active_column_idx);
+        cancel_resize_for_column(&mut self.interactive_resize, &mut column);
+        self.columns.insert(new_idx, column);
+        self.data.insert(new_idx, data);
+
+        // Preserve the camera position when moving to the left.
+        let view_offset_delta = -self.column_x(self.active_column_idx) + current_col_x;
+        self.view_offset.offset(view_offset_delta);
+
+        // The column we just moved is offset by the difference between its new and old position.
+        let new_col_x = self.column_x(new_idx);
+        self.columns[new_idx].animate_move_from(current_col_x - new_col_x);
+
+        // All columns in between moved by the width of the column that we just moved.
+        let others_x_offset = next_col_x - current_col_x;
+        if self.active_column_idx < new_idx {
+            for col in &mut self.columns[self.active_column_idx..new_idx] {
+                col.animate_move_from(others_x_offset);
+            }
+        } else {
+            for col in &mut self.columns[new_idx + 1..=self.active_column_idx] {
+                col.animate_move_from(-others_x_offset);
+            }
+        }
+
+        self.activate_column_with_anim_config(new_idx, self.options.animations.window_movement.0);
     }
 
     pub fn move_left(&mut self) -> bool {
@@ -2023,7 +2255,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return false;
         }
 
-        self.columns[self.active_column_idx].move_down()
+        // The window it swaps with changes sides of the moved window, so its pull flips.
+        let gather_before = self.gather_snapshot();
+        if !self.columns[self.active_column_idx].move_down() {
+            return false;
+        }
+        self.bake_gather(gather_before, travel_settle_spring(), true);
+        true
     }
 
     pub fn move_up(&mut self) -> bool {
@@ -2031,7 +2269,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return false;
         }
 
-        self.columns[self.active_column_idx].move_up()
+        // The window it swaps with changes sides of the moved window, so its pull flips.
+        let gather_before = self.gather_snapshot();
+        if !self.columns[self.active_column_idx].move_up() {
+            return false;
+        }
+        self.bake_gather(gather_before, travel_settle_spring(), true);
+        true
     }
 
     pub fn consume_or_expel_window_left(&mut self, window: Option<&W::Id>) {
@@ -3190,7 +3434,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             return;
         }
 
-        let shared_travel = self.shared_travel();
+        let travel = self.travel_render();
 
         // The active column comes first and carries the focus ring.
         for (i, (col, col_x)) in self.columns_in_render_order().enumerate() {
@@ -3201,10 +3445,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             self.render_column(
                 &mut ctx,
                 col,
+                render_order_idx(i, self.active_column_idx),
                 col_x,
                 xray_pos,
                 focus_ring && i == 0,
-                shared_travel,
+                travel,
                 push,
             );
         }
@@ -3221,7 +3466,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         focus_ring: bool,
         push: &mut dyn FnMut(ScrollingSpaceRenderElement<R>),
     ) {
-        let shared_travel = self.shared_travel();
+        let travel = self.travel_render();
         for (i, (col, col_x)) in self.columns_in_render_order().enumerate() {
             if !col.is_lifting() {
                 continue;
@@ -3229,39 +3474,53 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             self.render_column(
                 &mut ctx,
                 col,
+                render_order_idx(i, self.active_column_idx),
                 col_x,
                 xray_pos,
                 focus_ring && i == 0,
-                shared_travel,
+                travel,
                 push,
             );
         }
     }
 
-    /// Every column uses the moved window's scale, and shrinks toward that window rather than
-    /// toward its own center.
-    fn shared_travel(&self) -> Option<(f64, Point<i32, Physical>)> {
-        let (factor, pivot) = self.travel_pivot().or_else(|| {
-            self.residual_travel
-                .as_ref()
-                .map(|residual| (residual.anim.value(), residual.pivot))
-        })?;
-        Some((factor, pivot.to_physical_precise_round(self.scale)))
+    /// What the travel visuals need while drawing, computed once per frame.
+    fn travel_render(&self) -> TravelRender {
+        let column_scale = self.column_travel.and_then(|travel| {
+            let (factor, pivot) = self.travel_pivot()?;
+            Some((travel.idx, factor, pivot.to_physical_precise_round(self.scale)))
+        });
+        TravelRender {
+            gather: self.travel_gather(),
+            column_scale,
+        }
     }
 
+    /// Only the moved column scales, about the moved window's center. The other columns keep
+    /// their size and are drawn pulled in toward it by the travel gather.
     #[allow(clippy::too_many_arguments)]
     fn render_column<R: NiriRenderer>(
         &self,
         ctx: &mut RenderCtx<R>,
         col: &Column<W>,
+        col_idx: usize,
         col_x: f64,
         xray_pos: XrayPos,
         focus_ring: bool,
-        shared_travel: Option<(f64, Point<i32, Physical>)>,
+        travel: TravelRender,
         push: &mut dyn FnMut(ScrollingSpaceRenderElement<R>),
     ) {
         let scale = Scale::from(self.scale);
-        let shared_rescale = shared_travel.filter(|(factor, _)| (factor - 1.).abs() > 0.001);
+        let column_scale = travel
+            .column_scale
+            .filter(|(idx, _, _)| *idx == col_idx)
+            .map(|(_, factor, pivot)| (factor, pivot));
+        let column_rescale = column_scale.filter(|(factor, _)| (factor - 1.).abs() > 0.001);
+        let gather = |tile_idx: usize| {
+            travel
+                .gather
+                .map_or(Point::from((0., 0.)), |gather| gather.offset(col_idx, tile_idx))
+        };
 
         // This matches self.tiles_in_render_order().
         let view_off = Point::from((-self.view_pos(), 0.));
@@ -3270,10 +3529,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
         // Draw the tab indicator on top.
         {
-            let pos = view_off + col_off + col_render_off;
+            let pos = view_off + col_off + col_render_off + gather(col.active_tile_idx);
             let pos = pos.to_physical_precise_round(scale).to_logical(scale);
             col.tab_indicator.render(ctx.renderer, pos, &mut |elem| {
-                if let Some((factor, pivot)) = shared_rescale {
+                if let Some((factor, pivot)) = column_rescale {
                     push(RescaleRenderElement::from_element(elem, pivot, factor).into());
                 } else {
                     push(elem.into());
@@ -3282,8 +3541,14 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         }
 
         let mut first = true;
-        for (tile, tile_off, visible) in col.tiles_in_render_order() {
-            let tile_pos = view_off + col_off + col_render_off + tile_off + tile.render_offset();
+        for (i, (tile, tile_off, visible)) in col.tiles_in_render_order().enumerate() {
+            let tile_idx = render_order_idx(i, col.active_tile_idx);
+            let tile_pos = view_off
+                + col_off
+                + col_render_off
+                + tile_off
+                + tile.render_offset()
+                + gather(tile_idx);
             // Round to physical pixels.
             let tile_pos = tile_pos.to_physical_precise_round(scale).to_logical(scale);
 
@@ -3304,16 +3569,15 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             }
 
             let xray_pos = xray_pos.offset(tile_pos);
-            let travel_scale = shared_travel
-                .map(|(factor, _)| factor)
-                .unwrap_or_else(|| col.travel_scale())
+            let travel_scale = column_scale
+                .map_or_else(|| col.travel_scale(), |(factor, _)| factor)
                 .min(tile.travel_scale());
             // Window::geometry locks surface user data. tile.render() already holds that
             // lock while invoking this callback, so the pivot has to be computed here.
-            // A column move scales every window about the moved window. A window moving
-            // inside a column is the only one scaling, so its own center is that point.
+            // A moved column scales about the moved window. A window moving inside a column
+            // is the only one scaling, so its own center is that point.
             let travel_origin = ((travel_scale - 1.).abs() > 0.001).then(|| {
-                if let Some((_, pivot)) = shared_travel {
+                if let Some((_, pivot)) = column_scale {
                     pivot
                 } else {
                     let size = tile.animated_tile_size();
@@ -4630,7 +4894,7 @@ impl<W: LayoutElement> Column<W> {
         self.travel_scale_anim = Some(new_travel_scale_anim(
             &self.clock,
             self.travel_scale(),
-            TRAVEL_SCALE_MIN,
+            travel_min_scale(&self.options),
             travel_settle_spring(),
         ));
     }
@@ -5256,7 +5520,11 @@ impl<W: LayoutElement> Column<W> {
 
         // Animate the movement.
         let new_active_y = self.tile_offset(new_idx).y;
-        self.tiles[new_idx].animate_move_y_from_travel(active_y - new_active_y);
+        if travel_enabled(&self.options) {
+            self.tiles[new_idx].animate_move_y_from_travel(active_y - new_active_y);
+        } else {
+            self.tiles[new_idx].animate_move_y_from(active_y - new_active_y);
+        }
         self.tiles[new_idx + 1].animate_move_y_from(active_y - next_y);
 
         true
@@ -5279,7 +5547,11 @@ impl<W: LayoutElement> Column<W> {
 
         // Animate the movement.
         let new_active_y = self.tile_offset(new_idx).y;
-        self.tiles[new_idx].animate_move_y_from_travel(active_y - new_active_y);
+        if travel_enabled(&self.options) {
+            self.tiles[new_idx].animate_move_y_from_travel(active_y - new_active_y);
+        } else {
+            self.tiles[new_idx].animate_move_y_from(active_y - new_active_y);
+        }
         self.tiles[new_idx - 1].animate_move_y_from(next_y - active_y);
 
         true

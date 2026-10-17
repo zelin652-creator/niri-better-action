@@ -165,8 +165,16 @@ struct MoveAnimation {
     from: f64,
 }
 
-/// Smallest scale a traveling window springs down to before bouncing back to full size.
-pub(super) const TRAVEL_SCALE_MIN: f64 = 0.92;
+/// Whether moves play the travel visuals. When off, every move uses the upstream animation.
+pub(super) fn travel_enabled(options: &Options) -> bool {
+    let animations = &options.animations;
+    !animations.off && !animations.window_movement.0.off && !animations.window_travel.off
+}
+
+/// Smallest scale a traveling window shrinks to before easing back to full size.
+pub(super) fn travel_min_scale(options: &Options) -> f64 {
+    options.animations.window_travel.scale
+}
 
 /// Ease-out for the shrink and the cross. Slower than the stock window-movement spring.
 pub(super) fn travel_settle_spring() -> niri_config::Animation {
@@ -199,9 +207,10 @@ pub(super) fn new_travel_scale_anim(
     Animation::new(clock.clone(), from, to, 0., config)
 }
 
-/// Shrink spring switches to the bounce back up once it first reaches [`TRAVEL_SCALE_MIN`].
+/// The shrink switches to the ease back up once it first reaches its target. Only a shrink has a
+/// target below full size, so this does not depend on the configured scale.
 pub(super) fn advance_travel_scale(anim: Animation, clock: &Clock) -> Option<Animation> {
-    let shrinking = (anim.to() - TRAVEL_SCALE_MIN).abs() < 1e-9;
+    let shrinking = anim.to() < 1. - 1e-9;
     if shrinking && anim.is_clamped_done() {
         Some(new_travel_scale_anim(clock, anim.value(), 1., travel_spring()))
     } else if anim.is_done() {
@@ -717,7 +726,7 @@ impl<W: LayoutElement> Tile<W> {
         self.travel_scale_anim = Some(new_travel_scale_anim(
             &self.clock,
             from,
-            TRAVEL_SCALE_MIN,
+            travel_min_scale(&self.options),
             travel_spring(),
         ));
     }

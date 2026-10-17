@@ -13,6 +13,7 @@ pub struct Animations {
     pub window_close: WindowCloseAnim,
     pub horizontal_view_movement: HorizontalViewMovementAnim,
     pub window_movement: WindowMovementAnim,
+    pub window_travel: WindowTravelAnim,
     pub window_resize: WindowResizeAnim,
     pub config_notification_open_close: ConfigNotificationOpenCloseAnim,
     pub exit_confirmation_open_close: ExitConfirmationOpenCloseAnim,
@@ -29,6 +30,7 @@ impl Default for Animations {
             workspace_switch: Default::default(),
             horizontal_view_movement: Default::default(),
             window_movement: Default::default(),
+            window_travel: Default::default(),
             window_open: Default::default(),
             window_close: Default::default(),
             window_resize: Default::default(),
@@ -59,6 +61,8 @@ pub struct AnimationsPart {
     pub horizontal_view_movement: Option<HorizontalViewMovementAnim>,
     #[knuffel(child)]
     pub window_movement: Option<WindowMovementAnim>,
+    #[knuffel(child)]
+    pub window_travel: Option<WindowTravelAnim>,
     #[knuffel(child)]
     pub window_resize: Option<WindowResizeAnim>,
     #[knuffel(child)]
@@ -91,6 +95,7 @@ impl MergeWith<AnimationsPart> for Animations {
             window_close,
             horizontal_view_movement,
             window_movement,
+            window_travel,
             window_resize,
             config_notification_open_close,
             exit_confirmation_open_close,
@@ -223,6 +228,33 @@ impl Default for WindowMovementAnim {
             }),
         })
     }
+}
+
+/// Shrink-and-close-in effect when the user moves a window or column.
+///
+/// Turning it off, or turning off `window-movement`, brings back the plain upstream slide.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowTravelAnim {
+    pub off: bool,
+    /// Size the moved window shrinks to on the way, as a fraction of its full size.
+    pub scale: f64,
+}
+
+impl Default for WindowTravelAnim {
+    fn default() -> Self {
+        Self {
+            off: false,
+            scale: 0.88,
+        }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq)]
+struct WindowTravelAnimPart {
+    #[knuffel(child)]
+    off: bool,
+    #[knuffel(child, unwrap(argument))]
+    scale: Option<FloatOrInt<0, 1>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -368,6 +400,23 @@ where
         Ok(Self(Animation::decode_node(node, ctx, default, |_, _| {
             Ok(false)
         })?))
+    }
+}
+
+impl<S> knuffel::Decode<S> for WindowTravelAnim
+where
+    S: knuffel::traits::ErrorSpan,
+{
+    fn decode_node(
+        node: &knuffel::ast::SpannedNode<S>,
+        ctx: &mut knuffel::decode::Context<S>,
+    ) -> Result<Self, DecodeError<S>> {
+        let part = WindowTravelAnimPart::decode_node(node, ctx)?;
+        let default = Self::default();
+        Ok(Self {
+            off: part.off,
+            scale: part.scale.map_or(default.scale, |scale| scale.0),
+        })
     }
 }
 

@@ -58,8 +58,8 @@ cargo run -- -c resources/preview-config.kdl
 
 相关标识符都带 `travel` / `lift` 字样，可以直接 grep：
 
-- `tile.rs`：常量 `TRAVEL_SCALE_MIN = 0.92`；`travel_settle_spring()`（缩小与位移，420ms ease-out cubic）和 `travel_spring()`（恢复到 100%，480ms ease-out cubic）。函数名带 spring，实际都是缓动曲线，不是弹簧。`advance_travel_scale` 负责在缩小结束后切换到恢复阶段。
-- `scrolling.rs`：`ColumnTravel`（当前正在移动的列）、`ResidualTravel`（列移到别的工作区后留下的共享缩放，让剩余列缓回原尺寸）、`travel_pivot()`（所有列绕被移动窗口的中心缩放）、连按时冻结当前屏幕位置再继续，以及跨工作区时的浮起（lifted）状态。
+- `tile.rs`：`travel_enabled()`（`animations.off`、`window-movement.off` 或 `window-travel.off` 任一开启时返回 false，各入口据此退回上游动画）和 `travel_min_scale()`（读配置 `animations.window-travel.scale`，默认 0.88，定义在 `niri-config/src/animations.rs` 的 `WindowTravelAnim`）；`travel_settle_spring()`（缩小与位移，420ms ease-out cubic）和 `travel_spring()`（恢复到 100%，480ms ease-out cubic）。函数名带 spring，实际都是缓动曲线，不是弹簧。`advance_travel_scale` 负责在缩小结束后切换到恢复阶段。
+- `scrolling.rs`：`ColumnTravel`（当前正在移动的列）、`travel_pivot()`（被移动的列绕被移动窗口的中心缩放）、`TravelGather` / `travel_gather()`（只有被移动的窗口缩放，四周窗口保持原尺寸、按它的缩放算出平移量向中间聚拢）、`gather_snapshot()` / `bake_gather()`（连按、移除列、浮起时把聚拢量的变化折进移动动画，避免跳动）、连按时冻结当前屏幕位置再继续，以及跨工作区时的浮起（lifted）状态。
 - `monitor.rs`：`move_tile_to_workspace_with_travel` / `move_column_to_workspace_with_travel` 计算跨工作区移动的起点；渲染时调用各工作区的 `render_lifted`，把浮起的列绘制在所有工作区之上（即使它所在工作区不在屏幕内）。
 - `workspace.rs`：`begin_lift` / `has_lifted` / `render_lifted` 把浮起状态转交给 `ScrollingSpace` 中的同名方法。
 - `floating.rs`：浮动窗口绘制同样的缩放。

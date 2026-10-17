@@ -302,6 +302,12 @@ animations {
 
     // Slow down all animations by this factor. Values below 1 speed them up instead.
     // slowdown 3.0
+
+    // How small a window you move shrinks on the way, while the windows around it close in.
+    // Put "off" inside to use the plain upstream movement instead.
+    // window-travel {
+    //     scale 0.88
+    // }
 }
 
 // Window rules let you adjust behavior for individual windows.

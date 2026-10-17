@@ -2687,6 +2687,311 @@ fn repeated_moves_to_workspace_settle() {
     assert!(!layout.are_animations_ongoing(None));
 }
 
+fn travel_workspace(layout: &Layout<TestWindow>, ws_idx: usize) -> &Workspace<TestWindow> {
+    let MonitorSet::Normal { monitors, .. } = &layout.monitor_set else {
+        unreachable!()
+    };
+    &monitors[0].workspaces[ws_idx]
+}
+
+/// Where each scrolling window on a workspace is drawn, before the travel scale.
+fn travel_visual_positions(
+    layout: &Layout<TestWindow>,
+    ws_idx: usize,
+) -> Vec<(usize, Point<f64, Logical>)> {
+    let scrolling = travel_workspace(layout, ws_idx).scrolling();
+    scrolling
+        .tiles()
+        .map(|tile| {
+            let id = *tile.window().id();
+            (id, scrolling.window_visual_pos(&id).unwrap())
+        })
+        .collect()
+}
+
+#[track_caller]
+fn assert_travel_positions_match(
+    before: &[(usize, Point<f64, Logical>)],
+    after: &[(usize, Point<f64, Logical>)],
+) {
+    for (id, pos) in after {
+        let Some((_, prev)) = before.iter().find(|(prev_id, _)| prev_id == id) else {
+            continue;
+        };
+        let diff = *pos - *prev;
+        assert!(
+            diff.x.abs() < 1. && diff.y.abs() < 1.,
+            "window {id} jumped from {prev:?} to {pos:?}"
+        );
+    }
+}
+
+fn travel_settle(layout: &mut Layout<TestWindow>) {
+    for _ in 0..10 {
+        Op::AdvanceAnimations { msec_delta: 1000 }.apply(layout);
+        layout.verify_invariants();
+    }
+    assert!(!layout.are_animations_ongoing(None));
+}
+
+#[test]
+fn travel_neighbors_gather_without_scaling() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusColumnFirst,
+        Op::FocusColumnRight,
+    ];
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    travel_settle(&mut layout);
+
+    // Columns are now 0, 2, 1, 3, and 1 is the one moving.
+    let ops = [
+        Op::MoveColumnRight,
+        Op::AdvanceAnimations { msec_delta: 200 },
+    ];
+    check_ops_on_layout(&mut layout, ops);
+
+    let scrolling = travel_workspace(&layout, 0).scrolling();
+    let scale = |id: usize| scrolling.window_travel_scale(&id).unwrap();
+    let pull = |id: usize| scrolling.window_travel_pull(&id).unwrap();
+
+    assert!(scale(1) < 1.);
+    for id in [0, 2, 3] {
+        assert_eq!(scale(id), 1., "window {id} should keep its size");
+        assert_eq!(pull(id).y, 0.);
+    }
+    assert_eq!(pull(1), Point::from((0., 0.)));
+    assert!(pull(0).x > 0.);
+    assert_eq!(pull(0).x, pull(2).x, "the left side moves as one");
+    assert!(pull(3).x < 0.);
+
+    travel_settle(&mut layout);
+    let scrolling = travel_workspace(&layout, 0).scrolling();
+    for id in 0..4 {
+        assert_eq!(scrolling.window_travel_scale(&id), Some(1.));
+        assert_eq!(scrolling.window_travel_pull(&id), Some(Point::from((0., 0.))));
+    }
+}
+
+#[test]
+fn travel_window_move_gathers_vertically() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusColumnFirst,
+        Op::ConsumeWindowIntoColumn,
+        Op::ConsumeWindowIntoColumn,
+        Op::FocusWindowDown,
+    ];
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    travel_settle(&mut layout);
+
+    // The first column is now 0, 2, 1, and 1 is the one moving.
+    let ops = [
+        Op::MoveWindowDown,
+        Op::AdvanceAnimations { msec_delta: 200 },
+    ];
+    check_ops_on_layout(&mut layout, ops);
+
+    let scrolling = travel_workspace(&layout, 0).scrolling();
+    let scale = |id: usize| scrolling.window_travel_scale(&id).unwrap();
+    let pull = |id: usize| scrolling.window_travel_pull(&id).unwrap();
+
+    assert!(scale(1) < 1.);
+    for id in [0, 2, 3] {
+        assert_eq!(scale(id), 1., "window {id} should keep its size");
+    }
+    assert_eq!(pull(1), Point::from((0., 0.)));
+    assert!(pull(0).y > 0. && pull(0).x == 0.);
+    assert_eq!(pull(0).y, pull(2).y, "the windows above move as one");
+    assert!(pull(3).x < 0. && pull(3).y == 0.);
+
+    travel_settle(&mut layout);
+}
+
+#[test]
+fn travel_gather_continuous_on_repeat() {
+    let ops = [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(4),
+        },
+        Op::FocusColumnFirst,
+        Op::ConsumeWindowIntoColumn,
+        Op::ConsumeWindowIntoColumn,
+        Op::FocusWindowDown,
+    ];
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    travel_settle(&mut layout);
+
+    // Each press lands mid-shrink, where neighbors that change sides would flip their pull.
+    let presses = [
+        Op::MoveWindowDown,
+        Op::MoveWindowUp,
+        Op::MoveWindowUp,
+        Op::MoveColumnRight,
+        Op::MoveColumnRight,
+        Op::MoveColumnLeft,
+        Op::MoveWindowDown,
+    ];
+    for press in presses {
+        Op::AdvanceAnimations { msec_delta: 120 }.apply(&mut layout);
+        let before = travel_visual_positions(&layout, 0);
+        check_ops_on_layout(&mut layout, [press.clone()]);
+        let after = travel_visual_positions(&layout, 0);
+        assert_travel_positions_match(&before, &after);
+    }
+
+    // The moved column is now second, with one column on each side pulled toward it. The columns
+    // left behind keep their spacing as drawn instead of losing the pull at once.
+    Op::AdvanceAnimations { msec_delta: 120 }.apply(&mut layout);
+    let relative = |positions: Vec<(usize, Point<f64, Logical>)>| {
+        let origin = positions[0].1;
+        positions
+            .into_iter()
+            .map(|(id, pos)| (id, pos - origin))
+            .collect::<Vec<_>>()
+    };
+    let moving = *layout.focus().unwrap().id();
+    let before = travel_visual_positions(&layout, 0);
+    let before: Vec<_> = before.into_iter().filter(|(id, _)| *id != moving).collect();
+    check_ops_on_layout(&mut layout, [Op::MoveColumnToWorkspaceDown(true)]);
+    let after = travel_visual_positions(&layout, 0);
+    assert_travel_positions_match(&relative(before), &relative(after));
+
+    travel_settle(&mut layout);
+}
+
+fn travel_options(travel: niri_config::animations::WindowTravelAnim) -> Options {
+    Options {
+        animations: niri_config::Animations {
+            window_travel: travel,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// Four columns, the first holding windows 0 and 1 with 1 focused, then 2 and 3.
+fn travel_test_ops() -> [Op; 8] {
+    [
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(0),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusColumnFirst,
+        Op::ConsumeWindowIntoColumn,
+        Op::FocusWindowDown,
+    ]
+}
+
+#[test]
+fn travel_uses_configured_scale() {
+    let options = travel_options(niri_config::animations::WindowTravelAnim {
+        off: false,
+        scale: 0.95,
+    });
+    let mut layout = check_ops_with_options(options, travel_test_ops());
+    travel_settle(&mut layout);
+
+    check_ops_on_layout(&mut layout, [Op::MoveColumnRight]);
+    let mut smallest = 1f64;
+    for _ in 0..20 {
+        Op::AdvanceAnimations { msec_delta: 30 }.apply(&mut layout);
+        let scrolling = travel_workspace(&layout, 0).scrolling();
+        smallest = smallest.min(scrolling.window_travel_scale(&1).unwrap());
+    }
+    assert!(smallest < 0.99, "the moved window should shrink");
+    assert!(smallest >= 0.95 - 1e-6, "shrank past the configured scale: {smallest}");
+
+    travel_settle(&mut layout);
+}
+
+#[test]
+fn travel_off_matches_upstream() {
+    let off = niri_config::animations::WindowTravelAnim {
+        off: true,
+        ..Default::default()
+    };
+    let mut window_movement_off = travel_options(Default::default());
+    window_movement_off.animations.window_movement.0.off = true;
+
+    for options in [travel_options(off), window_movement_off] {
+        let mut layout = check_ops_with_options(options, travel_test_ops());
+        travel_settle(&mut layout);
+
+        let ops = [
+            Op::MoveColumnRight,
+            Op::AdvanceAnimations { msec_delta: 100 },
+            Op::MoveWindowUp,
+            Op::AdvanceAnimations { msec_delta: 100 },
+        ];
+        check_ops_on_layout(&mut layout, ops);
+
+        let scrolling = travel_workspace(&layout, 0).scrolling();
+        for id in 0..4 {
+            assert_eq!(scrolling.window_travel_scale(&id), Some(1.), "window {id} scaled");
+            assert_eq!(
+                scrolling.window_travel_pull(&id),
+                Some(Point::from((0., 0.))),
+                "window {id} pulled"
+            );
+        }
+
+        check_ops_on_layout(&mut layout, [Op::MoveColumnToWorkspaceDown(true)]);
+        let MonitorSet::Normal { monitors, .. } = &layout.monitor_set else {
+            unreachable!()
+        };
+        assert!(!monitors[0].workspaces.iter().any(|ws| ws.has_lifted()));
+
+        travel_settle(&mut layout);
+    }
+}
+
 #[test]
 fn interactive_move_onto_first_empty_workspace() {
     let ops = [
