@@ -2781,7 +2781,10 @@ fn travel_neighbors_gather_without_scaling() {
     let scrolling = travel_workspace(&layout, 0).scrolling();
     for id in 0..4 {
         assert_eq!(scrolling.window_travel_scale(&id), Some(1.));
-        assert_eq!(scrolling.window_travel_pull(&id), Some(Point::from((0., 0.))));
+        assert_eq!(
+            scrolling.window_travel_pull(&id),
+            Some(Point::from((0., 0.)))
+        );
     }
 }
 
@@ -2946,7 +2949,10 @@ fn travel_uses_configured_scale() {
         smallest = smallest.min(scrolling.window_travel_scale(&1).unwrap());
     }
     assert!(smallest < 0.99, "the moved window should shrink");
-    assert!(smallest >= 0.95 - 1e-6, "shrank past the configured scale: {smallest}");
+    assert!(
+        smallest >= 0.95 - 1e-6,
+        "shrank past the configured scale: {smallest}"
+    );
 
     travel_settle(&mut layout);
 }
@@ -2974,7 +2980,11 @@ fn travel_off_matches_upstream() {
 
         let scrolling = travel_workspace(&layout, 0).scrolling();
         for id in 0..4 {
-            assert_eq!(scrolling.window_travel_scale(&id), Some(1.), "window {id} scaled");
+            assert_eq!(
+                scrolling.window_travel_scale(&id),
+                Some(1.),
+                "window {id} scaled"
+            );
             assert_eq!(
                 scrolling.window_travel_pull(&id),
                 Some(Point::from((0., 0.))),

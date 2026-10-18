@@ -666,16 +666,51 @@ mod tests {
             }
         );
 
-        let config = do_parse("animations { window-travel { off; scale 0.95; } }");
+        let config = do_parse(
+            "
+            animations {
+                window-travel {
+                    off
+                    scale 0.95
+                }
+            }
+            ",
+        );
         assert!(config.animations.window_travel.off);
         assert_eq!(config.animations.window_travel.scale, 0.95);
 
         // Integers are accepted like everywhere else.
-        let config = do_parse("animations { window-travel { scale 1; } }");
+        let config = do_parse(
+            "
+            animations {
+                window-travel {
+                    scale 1
+                }
+            }
+            ",
+        );
         assert_eq!(config.animations.window_travel.scale, 1.);
 
-        assert!(Config::parse_mem("animations { window-travel { scale 1.5; } }").is_err());
-        assert!(Config::parse_mem("animations { window-travel { scale -0.5; } }").is_err());
+        assert!(Config::parse_mem(
+            "
+            animations {
+                window-travel {
+                    scale 1.5
+                }
+            }
+            "
+        )
+        .is_err());
+        assert!(Config::parse_mem(
+            "
+            animations {
+                window-travel {
+                    scale -0.5
+                }
+            }
+            "
+        )
+        .is_err());
     }
 
     #[test]

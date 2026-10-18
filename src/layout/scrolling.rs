@@ -1855,7 +1855,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let tile_idx = self.columns[col_idx].position(window)?;
         let gather = self
             .travel_gather()
-            .map_or(Point::from((0., 0.)), |gather| gather.offset(col_idx, tile_idx));
+            .map_or(Point::from((0., 0.)), |gather| {
+                gather.offset(col_idx, tile_idx)
+            });
         Some(self.tile_visual_pos(col_idx, tile_idx) + gather)
     }
 
@@ -1866,7 +1868,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let tile_idx = self.columns[col_idx].position(window)?;
         Some(
             self.travel_gather()
-                .map_or(Point::from((0., 0.)), |gather| gather.offset(col_idx, tile_idx)),
+                .map_or(Point::from((0., 0.)), |gather| {
+                    gather.offset(col_idx, tile_idx)
+                }),
         )
     }
 
@@ -1953,9 +1957,8 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let tile_idx = col.active_tile_idx;
         let tile = &col.tiles[tile_idx];
         // Matches travel_pivot(): the column scales about the active window's center.
-        let center_x = col.tile_offset(tile_idx).x
-            + tile.render_offset().x
-            + tile.animated_tile_size().w / 2.;
+        let center_x =
+            col.tile_offset(tile_idx).x + tile.render_offset().x + tile.animated_tile_size().w / 2.;
         let shrink = 1. - col.travel_scale();
         TravelGather {
             col_idx: idx,
@@ -3488,7 +3491,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     fn travel_render(&self) -> TravelRender {
         let column_scale = self.column_travel.and_then(|travel| {
             let (factor, pivot) = self.travel_pivot()?;
-            Some((travel.idx, factor, pivot.to_physical_precise_round(self.scale)))
+            Some((
+                travel.idx,
+                factor,
+                pivot.to_physical_precise_round(self.scale),
+            ))
         });
         TravelRender {
             gather: self.travel_gather(),
@@ -3517,9 +3524,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             .map(|(_, factor, pivot)| (factor, pivot));
         let column_rescale = column_scale.filter(|(factor, _)| (factor - 1.).abs() > 0.001);
         let gather = |tile_idx: usize| {
-            travel
-                .gather
-                .map_or(Point::from((0., 0.)), |gather| gather.offset(col_idx, tile_idx))
+            travel.gather.map_or(Point::from((0., 0.)), |gather| {
+                gather.offset(col_idx, tile_idx)
+            })
         };
 
         // This matches self.tiles_in_render_order().
