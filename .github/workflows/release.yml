@@ -78,6 +78,8 @@ jobs:
         with:
           draft: true
           tag_name: v${{ github.event.inputs.version }}
+          # Tag the commit that was built, not the default branch.
+          target_commitish: ${{ github.sha }}
           files: |
             niri-${{ github.event.inputs.version }}-x86_64-linux.tar.gz
             niri-${{ github.event.inputs.version }}-x86_64-linux.tar.gz.sha256
