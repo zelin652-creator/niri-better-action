@@ -11,7 +11,7 @@ env:
   DEPS_APT: curl gcc clang libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libpango1.0-dev libdisplay-info-dev
   DEPS_DNF: cargo gcc clang libudev-devel libgbm-devel libxkbcommon-devel wayland-devel libinput-devel dbus-devel systemd-devel libseat-devel pipewire-devel pango-devel cairo-gobject-devel libdisplay-info-devel
   DEPS_APK: cargo clang-libclang eudev-dev glib-dev libdisplay-info-dev libinput-dev libseat-dev libxkbcommon-dev mesa-dev pango-dev pipewire-dev tar
-  DEPS_PKG: git curl rust llvm pkgconf pixman libudev-devd libdisplay-info seatd libinput libxkbcommon pipewire mesa-libs cairo devel/glib20 gettext-runtime harfbuzz pango
+  DEPS_PKG: git curl rust llvm pkgconf pixman libudev-devd seatd libinput libxkbcommon pipewire mesa-libs cairo devel/glib20 gettext-runtime harfbuzz pango
 
 jobs:
   test:
@@ -266,14 +266,24 @@ jobs:
           copyback: false
           prepare: |
             pkg update -f
-            pkg install -y ${{ env.DEPS_PKG }}
+            pkg install -y ${{ env.DEPS_PKG }} meson ninja python3 hwdata
           run: |
-            # From FreeBSD ports x11-wm/niri/files at cadf6784d264cf780b6e0ad59bd15b831d36cf80,
-            # kept in the repo because cgit.freebsd.org rate-limits CI runners with 429.
+            # FreeBSD 15.1 ships libdisplay-info 0.4, but libdisplay-info-sys 0.3 only accepts
+            # < 0.4, so build 0.3.0 ourselves.
+            curl -fsSL --retry 3 -o libdisplay-info.tar.gz https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.3.0/libdisplay-info-0.3.0.tar.gz
+            echo "2b467e3336aec63819d6aca28d7310d3dc7415b2b3a3c3a5aec9d3727053c078  libdisplay-info.tar.gz" | sha256sum -c
+            tar -xzf libdisplay-info.tar.gz
+            meson setup di-build libdisplay-info-0.3.0 --prefix="$PWD/di" --libdir=lib \
+              --default-library=static --buildtype=release
+            ninja -C di-build install
+            export PKG_CONFIG_PATH="$PWD/di/lib/pkgconfig"
+
             export CARGO_HOME="$PWD/cargo-home"
 
             cargo fetch
 
+            # From FreeBSD ports x11-wm/niri/files at cadf6784d264cf780b6e0ad59bd15b831d36cf80,
+            # kept in the repo because cgit.freebsd.org rate-limits CI runners with 429.
             ( cd $CARGO_HOME/registry/src/index.crates.io-*/; patch -p1 < $CARGO_HOME/../.github/freebsd/patch-pipewire_init; )
 
             cargo build \
