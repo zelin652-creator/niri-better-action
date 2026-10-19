@@ -247,10 +247,18 @@ check_new_binary() {
 
     if ! NEW_VERSION=$("$NEW" --version 2>&1); then
         echo "$NEW_VERSION" >&2
+        local missing=""
         if command -v ldd >/dev/null 2>&1; then
-            ldd "$NEW" 2>&1 | grep -E 'not found|GLIBC' >&2 || true
+            missing=$(ldd "$NEW" 2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')
         fi
-        die "新版 niri 在这台机器上运行不了，多半是系统的 glibc 太旧（需要 2.39 以上）或缺少库。可以自己编译后用 --local 安装。"
+        if [ -n "$missing" ]; then
+            die "系统缺少新版 niri 需要的库：$missing
+如果原版 niri 能正常用，说明发行版里这个库的版本和编译环境不同。请先运行 bash install.sh 换最新的 Release 再试；仍不行就自己编译后用 --local target/release/niri 安装（见 README）。"
+        fi
+        case $NEW_VERSION in
+        *GLIBC_*) die "系统的 glibc 太旧，新版需要 2.39 以上。请自己编译后用 --local target/release/niri 安装（见 README）。" ;;
+        esac
+        die "新版 niri 在这台机器上运行不了（见上面的输出）。可以自己编译后用 --local target/release/niri 安装（见 README）。"
     fi
     info "新版：$NEW_VERSION"
 
