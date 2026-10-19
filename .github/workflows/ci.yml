@@ -278,7 +278,9 @@ jobs:
             meson setup di-build libdisplay-info-0.3.0 --prefix="$PWD/di" --libdir=lib \
               --default-library=static --buildtype=release
             ninja -C di-build install
-            export PKG_CONFIG_PATH="$PWD/di/lib/pkgconfig"
+            # Meson installs .pc files to libdata/pkgconfig on FreeBSD.
+            export PKG_CONFIG_PATH="$PWD/di/libdata/pkgconfig:$PWD/di/lib/pkgconfig"
+            pkg-config --modversion libdisplay-info
 
             export CARGO_HOME="$PWD/cargo-home"
 
