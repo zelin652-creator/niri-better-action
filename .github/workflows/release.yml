@@ -57,10 +57,29 @@ jobs:
       - name: Test
         run: cargo test --all --frozen --release -- --nocapture
 
+      # Same layout as the generate-rpm / deb assets in Cargo.toml, so it can be
+      # installed with `sudo tar -xzf niri-*-x86_64-linux.tar.gz -C /`.
+      - name: Package binary
+        run: |
+          pkg=niri-${{ github.event.inputs.version }}-x86_64-linux
+          root=dist/$pkg
+          install -Dm755 -t $root/usr/bin target/release/niri resources/niri-session
+          strip $root/usr/bin/niri
+          install -Dm644 -t $root/usr/share/wayland-sessions resources/niri.desktop
+          install -Dm644 -t $root/usr/share/xdg-desktop-portal resources/niri-portals.conf
+          install -Dm644 -t $root/usr/lib/systemd/user resources/niri.service resources/niri-shutdown.target
+          install -Dm644 -t $root/usr/share/doc/niri README.md
+          install -Dm644 -t $root/usr/share/licenses/niri LICENSE
+          tar -czf $pkg.tar.gz -C $root usr
+          sha256sum $pkg.tar.gz > $pkg.tar.gz.sha256
+
       - name: Draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           tag_name: v${{ github.event.inputs.version }}
-          files: niri-${{ github.event.inputs.version }}-vendored-dependencies.tar.xz
+          files: |
+            niri-${{ github.event.inputs.version }}-x86_64-linux.tar.gz
+            niri-${{ github.event.inputs.version }}-x86_64-linux.tar.gz.sha256
+            niri-${{ github.event.inputs.version }}-vendored-dependencies.tar.xz
           fail_on_unmatched_files: true
