@@ -271,7 +271,9 @@ jobs:
             # FreeBSD 15.1 ships libdisplay-info 0.4, but libdisplay-info-sys 0.3 only accepts
             # < 0.4, so build 0.3.0 ourselves.
             curl -fsSL --retry 3 -o libdisplay-info.tar.gz https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.3.0/libdisplay-info-0.3.0.tar.gz
-            echo "2b467e3336aec63819d6aca28d7310d3dc7415b2b3a3c3a5aec9d3727053c078  libdisplay-info.tar.gz" | sha256sum -c
+            # FreeBSD's sha256sum can't read the checksum list from stdin.
+            echo "2b467e3336aec63819d6aca28d7310d3dc7415b2b3a3c3a5aec9d3727053c078  libdisplay-info.tar.gz" > libdisplay-info.sha256
+            sha256sum -c libdisplay-info.sha256
             tar -xzf libdisplay-info.tar.gz
             meson setup di-build libdisplay-info-0.3.0 --prefix="$PWD/di" --libdir=lib \
               --default-library=static --buildtype=release
