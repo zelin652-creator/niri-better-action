@@ -74,12 +74,49 @@ animations {
 
 实现位于 `src/layout/scrolling.rs`（列的缩小、错开、恢复，连按时冻结当前位置，以及跨工作区时的浮起位移）、`src/layout/monitor.rs`（跨工作区移动的起点计算，以及在所有工作区之上绘制浮起的列）、`src/layout/tile.rs`（单窗口的缩放）和 `src/layout/floating.rs`（浮动窗口绘制同样的缩放）。
 
-### 基线与构建
+### 安装
 
-- 上游：<https://github.com/niri-wm/niri>
-- 基线标签：[v26.04](https://github.com/niri-wm/niri/releases/tag/v26.04)
-- 编译、运行和配置与这一版 niri 相同，见 [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html)
-- niri 本身不是完整桌面环境，还需要状态栏、启动器等组件
+先用发行版的包管理器装好 niri（例如 `sudo pacman -S niri`、`sudo dnf install niri`），它会带上登录会话、门户配置和 systemd 服务。然后运行：
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/zelin652-creator/niri-better-action/main/install.sh
+bash install.sh
+```
+
+脚本会识别系统，先确认新版能在这台机器上运行、能读懂你现在的配置，再把新版装到 `/usr/local` 并让登录时启动它。发行版的 niri 不会被修改，系统升级 niri 也不会把新版冲掉。注销后重新登录生效。
+
+装好后用 `niri-better` 管理：
+
+| 命令 | 作用 |
+| --- | --- |
+| `niri-better status` | 查看登录时用的是新版还是原版 |
+| `niri-better off` / `on` | 以后都用原版 / 切回新版 |
+| `niri-better once` | 只有下一次登录用原版 |
+| `niri-better uninstall` | 完全还原 |
+| `bash install.sh` | 再运行一次就是更新到最新版 |
+
+出问题时：
+
+- 新版连续 2 次没能正常启动，下次登录会自动改用原版。
+- 登录界面多了一个「Niri（原版）」会话，选它就只这一次用原版。
+- 图形界面进不去时，按 `Ctrl+Alt+F3` 切到终端登录，运行 `niri-better off` 或 `niri-better uninstall`。
+
+[Release](https://github.com/zelin652-creator/niri-better-action/releases) 里的包是在 Ubuntu 24.04 上为 x86_64 编译的，需要 glibc 2.39 以上，Ubuntu 24.04、Debian 13、Fedora 40、Arch 及更新的系统都可以。其他架构或更旧的系统请自己编译：
+
+```sh
+git clone https://github.com/zelin652-creator/niri-better-action
+cd niri-better-action
+cargo build --release
+bash install.sh --local target/release/niri
+```
+
+编译需要 Rust 1.85 以上（发行版的太旧就用 [rustup](https://rustup.rs) 装）和 clang。装好 niri 后，大部分库已经有了：
+
+- Arch：`sudo pacman -S --needed base-devel rust clang`
+- Fedora：`sudo dnf install cargo gcc clang libudev-devel libgbm-devel libxkbcommon-devel wayland-devel libinput-devel dbus-devel systemd-devel libseat-devel pipewire-devel pango-devel cairo-gobject-devel libdisplay-info-devel`
+- Debian / Ubuntu：`sudo apt install gcc clang libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libpango1.0-dev libdisplay-info-dev`
+
+本仓库基于上游 [v26.04](https://github.com/niri-wm/niri/releases/tag/v26.04)，配置和使用方法见上游的 [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html)。niri 本身不是完整桌面环境，还需要状态栏、启动器等组件。
 
 ### 许可与反馈
 
@@ -144,12 +181,49 @@ The default bindings are unchanged:
 
 The code lives in `src/layout/scrolling.rs` (column shrink, cross, grow, holding the current position across repeated presses, and the lifted offset for cross-workspace moves), `src/layout/monitor.rs` (the start point of a cross-workspace move, and drawing the lifted column above every workspace), `src/layout/tile.rs` (per-window scale), and `src/layout/floating.rs` (the same scale while drawing floating windows).
 
-### Base and build
+### Install
 
-- Upstream: <https://github.com/niri-wm/niri>
-- Base tag: [v26.04](https://github.com/niri-wm/niri/releases/tag/v26.04)
-- Build, run, and configuration match that niri release. See [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html).
-- niri by itself is not a full desktop; it still needs a bar, a launcher, and the rest of a session.
+Install niri from your distribution first (for example `sudo pacman -S niri` or `sudo dnf install niri`). That brings the login session, portal config, and systemd service. Then run:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/zelin652-creator/niri-better-action/main/install.sh
+bash install.sh
+```
+
+The script detects your system, checks that the new build runs on this machine and accepts your current config, then installs it under `/usr/local` and makes login start it. Your distribution's niri is left untouched, and distribution upgrades won't overwrite this build. Log out and back in to use it.
+
+Manage it afterwards with `niri-better`:
+
+| Command | What it does |
+| --- | --- |
+| `niri-better status` | Show whether login uses this build or the original |
+| `niri-better off` / `on` | Use the original from now on / switch back |
+| `niri-better once` | Use the original for the next login only |
+| `niri-better uninstall` | Restore everything |
+| `bash install.sh` | Run again to update to the latest release |
+
+If something goes wrong:
+
+- After 2 failed starts in a row, the next login falls back to the original niri automatically.
+- The login screen gets a "Niri（原版）" session that uses the original for that one login.
+- If you can't reach a desktop, press `Ctrl+Alt+F3`, log in on the console, and run `niri-better off` or `niri-better uninstall`.
+
+[Release](https://github.com/zelin652-creator/niri-better-action/releases) builds are x86_64, built on Ubuntu 24.04, and need glibc 2.39 or newer: Ubuntu 24.04, Debian 13, Fedora 40, Arch, and later. On other architectures or older systems, build it yourself:
+
+```sh
+git clone https://github.com/zelin652-creator/niri-better-action
+cd niri-better-action
+cargo build --release
+bash install.sh --local target/release/niri
+```
+
+Building needs Rust 1.85 or newer (use [rustup](https://rustup.rs) if your distribution's is older) and clang. With niri already installed, most libraries are there:
+
+- Arch: `sudo pacman -S --needed base-devel rust clang`
+- Fedora: `sudo dnf install cargo gcc clang libudev-devel libgbm-devel libxkbcommon-devel wayland-devel libinput-devel dbus-devel systemd-devel libseat-devel pipewire-devel pango-devel cairo-gobject-devel libdisplay-info-devel`
+- Debian / Ubuntu: `sudo apt install gcc clang libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libpango1.0-dev libdisplay-info-dev`
+
+This tree is based on upstream [v26.04](https://github.com/niri-wm/niri/releases/tag/v26.04). For configuration and usage, see upstream [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html). niri by itself is not a full desktop; it still needs a bar, a launcher, and the rest of a session.
 
 ### License and feedback
 
