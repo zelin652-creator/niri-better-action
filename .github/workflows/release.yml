@@ -38,7 +38,22 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y curl gcc clang libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libpango1.0-dev libdisplay-info-dev libadwaita-1-dev
+          sudo apt-get install -y curl gcc clang libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libpango1.0-dev libadwaita-1-dev meson ninja-build hwdata
+
+      # Ubuntu 24.04 has libdisplay-info 0.1 (libdisplay-info.so.1), while newer distributions
+      # ship 0.2 or 0.3 under a different soname. Link it statically so the release binary
+      # runs on both.
+      - name: Build static libdisplay-info
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o libdisplay-info.tar.gz https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.3.0/libdisplay-info-0.3.0.tar.gz
+          echo "2b467e3336aec63819d6aca28d7310d3dc7415b2b3a3c3a5aec9d3727053c078  libdisplay-info.tar.gz" | sha256sum -c
+          tar -xzf libdisplay-info.tar.gz
+          meson setup di-build libdisplay-info-0.3.0 --prefix="$RUNNER_TEMP/di" --libdir=lib \
+            --default-library=static --buildtype=release
+          ninja -C di-build install
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/di/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "SYSTEM_DEPS_LIBDISPLAY_INFO_LINK=static" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -50,6 +65,14 @@ jobs:
 
       - name: Build
         run: cargo build --all --frozen --release
+
+      - name: Check shared library dependencies
+        run: |
+          readelf -d target/release/niri | grep NEEDED
+          if readelf -d target/release/niri | grep -q libdisplay-info; then
+            echo "libdisplay-info should be linked statically" >&2
+            exit 1
+          fi
 
       - name: Build tests
         run: cargo test --no-run --all --frozen --release
