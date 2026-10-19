@@ -101,8 +101,10 @@ jobs:
         with:
           draft: true
           tag_name: v${{ github.event.inputs.version }}
-          # Tag the commit that was built, not the default branch.
-          target_commitish: ${{ github.sha }}
+          # Tag the branch that was built, not the default branch. (A commit SHA here makes
+          # GITHUB_TOKEN fail with "Resource not accessible by integration".)
+          target_commitish: ${{ github.ref_name }}
+          body: Built from ${{ github.sha }} on ${{ github.ref_name }}.
           files: |
             niri-${{ github.event.inputs.version }}-x86_64-linux.tar.gz
             niri-${{ github.event.inputs.version }}-x86_64-linux.tar.gz.sha256
