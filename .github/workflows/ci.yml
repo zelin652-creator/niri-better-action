@@ -265,6 +265,8 @@ jobs:
           release: "15.0"
           copyback: false
           prepare: |
+            # Packages may be built for a newer 15.x point release than the VM image.
+            export IGNORE_OSVERSION=yes
             pkg update -f
             pkg install -y ${{ env.DEPS_PKG }}
           run: |
@@ -301,7 +303,7 @@ jobs:
         continue-on-error: true
 
   publish-wiki:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository == 'niri-wm/niri' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - publish-docs
     permissions:
@@ -318,7 +320,7 @@ jobs:
           path: docs/wiki/
 
   publish-docs:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.repository == 'niri-wm/niri' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs:
       - test
     permissions:
