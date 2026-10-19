@@ -1,6 +1,6 @@
 <h1 align="center">niri-better-action</h1>
 
-<p align="center">基于 niri 的滚动平铺 Wayland 合成器。左右移动列时，窗口会先一起缩小、错开，再缓回原尺寸；连按从当前画面继续，而不是跳回静止布局。</p>
+<p align="center">基于 niri 的滚动平铺 Wayland 合成器。在原项目上改进了移动窗口的动画逻辑,窗口为移动先缩小再放大,动画风格受macOS从右侧工作区返回桌面所启发,并优化窗口移动的连贯性,上下切换窗口不再为硬切而是保留视觉重心为当前移动的窗口,经过验证与niri和其他第三方桌面插件无冲突,后续会继续兼容上游发行</p>
 <p align="center">A scrollable-tiling Wayland compositor based on niri. Moving a column left or right shrinks the windows together, slides them apart, then eases them back to full size. Another press continues from the picture on screen.</p>
 
 <p align="center">
@@ -15,21 +15,19 @@
 
 <img width="1280" height="720" alt="niri with a few windows open" src="https://github.com/user-attachments/assets/dea5909e-1859-4aaa-9d88-d37f9663e00b" />
 
-这是上游 niri 的静态截图，用来说明布局。本仓库改的是移动过程中的动画。
-
 ---
 
 ## 中文
 
 ### 这是什么
 
-[niri](https://github.com/niri-wm/niri) 是一个滚动平铺的 Wayland 合成器：窗口排成向右延伸的列，新窗口不会把已有窗口挤变形；每个显示器有自己的列带和工作区。
+[niri](https://github.com/niri-wm/niri) 是一个滚动平铺的 Wayland 合成器
 
 **niri-better-action** 从 niri **v26.04**（`8ed0da4`）分出。配置、快捷键、IPC、多显示器、浮动窗口、标签、截图和门户投屏都与这一版上游相同。本仓库只改了移动列、在列内上下移动窗口，以及把窗口或列移到其他工作区时的过渡。
 
-### 和原项目的区别
+### 与原niri的区别
 
-上游在 `move-column-left` / `move-column-right` 时，按新顺序重排列，再用配置项 `animations.window-movement`（默认是弹簧）把列滑到新位置。窗口在移动过程中保持原尺寸。动画尚未结束就再按一次时，偏移从静止布局重算，画面会先回到排好的位置，再开始下一次滑动。
+上游在 `move-column-left` / `move-column-right` 时，按新顺序重排列，再用配置项 `animations.window-movement`把列滑到新位置。窗口在移动过程中保持原尺寸。动画尚未结束就再按一次时，偏移从静止布局重算，画面会先回到排好的位置，再开始下一次滑动。
 
 这一支把左右移动列做成同时进行的缩小和错开，再恢复尺寸，并让连按沿着当前画面继续：
 
@@ -72,7 +70,7 @@
 
 ### 许可与反馈
 
-本仓库与上游一样使用 [GPL-3.0-or-later](LICENSE)。niri 由 Ivan Molodetskikh 编写。这里的移动动画由 zelin_cai 修改。
+本仓库与上游一样使用 [GPL-3.0-or-later](LICENSE)。niri 由 Ivan Molodetskikh 编写。这里的移动动画由 lin 修改。
 
 本仓库的动画问题请提到这里。其余合成器行为的问题仍应报到 [niri-wm/niri](https://github.com/niri-wm/niri)。
 
