@@ -203,7 +203,12 @@ pub(super) fn new_travel_scale_anim(
 pub(super) fn advance_travel_scale(anim: Animation, clock: &Clock) -> Option<Animation> {
     let shrinking = (anim.to() - TRAVEL_SCALE_MIN).abs() < 1e-9;
     if shrinking && anim.is_clamped_done() {
-        Some(new_travel_scale_anim(clock, anim.value(), 1., travel_spring()))
+        Some(new_travel_scale_anim(
+            clock,
+            anim.value(),
+            1.,
+            travel_spring(),
+        ))
     } else if anim.is_done() {
         None
     } else {
